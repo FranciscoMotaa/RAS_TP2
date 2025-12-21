@@ -12,6 +12,7 @@ import {
   downloadProjectResults,
   processProject,
   updateProject,
+  shareProject,
   updateProjectTool,
   previewProjectImage,
 } from "../projects";
@@ -69,6 +70,13 @@ export const useUpdateProject = (uid: string, pid: string, token: string) => {
         queryKey: ["project", uid, pid, token],
       });
     },
+  });
+};
+
+export const useShareProject = (uid: string, pid: string, token: string) => {
+  return useMutation({
+    mutationFn: (data: { permission: 'view' | 'edit'; expiresHours?: number; singleUse?: boolean }) =>
+      shareProject({ uid, pid, token, ...data }),
   });
 };
 

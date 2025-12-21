@@ -229,6 +229,36 @@ export const downloadProjectImage = async ({
   };
 };
 
+export const shareProject = async ({
+  uid,
+  pid,
+  token,
+  permission,
+  expiresHours,
+  singleUse,
+}: {
+  uid: string;
+  pid: string;
+  token: string;
+  permission: 'view' | 'edit';
+  expiresHours?: number;
+  singleUse?: boolean;
+}) => {
+  const response = await api.post(
+    `/projects/${uid}/${pid}/share`,
+    { permission, expiresHours, singleUse },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (response.status !== 200 || !response.data) throw new Error('Failed to create share link');
+
+  return response.data;
+};
+
 export const downloadProjectImages = async ({
   uid,
   pid,

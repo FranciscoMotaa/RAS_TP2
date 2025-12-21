@@ -29,6 +29,7 @@ import { Transition } from "@headlessui/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ModeToggle } from "@/components/project-page/mode-toggle";
+import ShareModal from "@/components/project-page/share-modal";
 import { SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -244,6 +245,7 @@ export default function Project({
               <div className="hidden xl:flex items-center gap-2">
                 <ViewToggle />
                 <ModeToggle />
+                <ShareModal />
               </div>
             </div>
           </div>

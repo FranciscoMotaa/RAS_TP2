@@ -214,6 +214,7 @@ services:
     restart: on-failure
     environment:
       - JWT_SECRET_KEY=lisan_al_gaib
+      - FRONTEND_URL=http://localhost:8080
     networks:
       - elk
     volumes:

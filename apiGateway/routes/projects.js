@@ -5,6 +5,8 @@ const axios = require("axios");
 
 const https = require("https");
 const fs = require("fs");
+const jwt = require("jsonwebtoken");
+const { randomUUID } = require("crypto");
 
 const multer = require("multer");
 const FormData = require("form-data");
@@ -20,10 +22,16 @@ const httpsAgent = new https.Agent({
   key: key,
 });
 
+// In-memory store for consumed single-use share tokens (jti values).
+// NOTE: This is volatile and will be lost on restart; use Redis for production.
+const consumedShareJtis = new Set();
+
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 const projectsURL = "https://projects:9001/";
+const SHARE_SECRET = process.env.SHARE_SECRET || 'segredo_super_secreto_mudar_em_prod';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // TODO Verify jwt
 
@@ -66,6 +74,57 @@ Post answer structure in case of success
  * Note: auth.checkToken is a midleware used to verify JWT
  */
 
+// Fetch project by share token (public access using token)
+router.get('/share/project', function (req, res, next) {
+  const token = req.query.token;
+  if (!token) return res.status(400).jsonp({ error: 'Token em falta.' });
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    console.log('Decoded share token:', JSON.stringify(decoded));
+    if (decoded.type !== 'share_link') return res.status(403).jsonp({ error: 'Token inválido.' });
+
+    // Check single-use token state before proxying
+    if (decoded.singleUse && consumedShareJtis.has(decoded.jti)) {
+      return res.status(410).jsonp({ error: 'Este link de partilha já foi utilizado.' });
+    }
+
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}`;
+    console.log('Fetching shared project from:', targetUrl);
+
+    // Proxy internal request to projects microservice to fetch project data
+    axios
+      .get(targetUrl, { httpsAgent: httpsAgent })
+      .then((resp) => {
+        // Mark single-use token as consumed only after a successful fetch
+        if (decoded.singleUse && decoded.jti) {
+          consumedShareJtis.add(decoded.jti);
+        }
+        res.status(200).jsonp({ project: resp.data, permission: decoded.permission });
+      })
+      .catch((err) => {
+        try {
+          console.error('Error fetching project by share token - message:', err && err.message);
+          console.error('Error object keys:', Object.getOwnPropertyNames(err));
+          if (err && err.config) console.error('Axios config url:', err.config.url);
+          if (err && err.response) {
+            console.error('Upstream status:', err.response.status);
+            console.error('Upstream headers:', err.response.headers);
+            console.error('Upstream data:', err.response.data);
+          }
+          if (err && err.request) console.error('Request made but no response, request keys:', Object.keys(err.request || {}));
+          console.error('Full error stack:', err && err.stack ? err.stack : err);
+        } catch (logErr) {
+          console.error('Error while logging fetch error', logErr);
+        }
+        res.status(500).jsonp({ error: 'Erro ao obter projeto partilhado' });
+      });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') return res.status(410).jsonp({ error: 'Este link de partilha expirou.' });
+    return res.status(403).jsonp({ error: 'Link de partilha inválido.' });
+  }
+});
+
 /**
  * Get user's projects
  * @body Empty
@@ -90,6 +149,94 @@ router.get("/:user/:project", auth.checkToken, function (req, res, next) {
     })
     .then((resp) => res.status(200).jsonp(resp.data))
     .catch((err) => res.status(500).jsonp("Error getting project"));
+});
+
+// Generate share token for a project (requires auth)
+router.post('/:user/:project/share', auth.checkToken, function (req, res, next) {
+  const permission = req.body.permission;
+  const expiresHours = req.body.expiresHours;
+  const singleUse = !!req.body.singleUse;
+
+  if (!['view', 'edit'].includes(permission)) {
+    return res.status(400).jsonp({ error: "Permissão inválida. Use 'view' ou 'edit'." });
+  }
+
+  try {
+    // auth.checkToken already validated the JWT and ensured req.params.user matches the token's user.
+    // Use the provided user param as owner to avoid re-verifying the token here.
+    const owner = req.params.user;
+
+    const jti = randomUUID();
+    const hours = typeof expiresHours === 'number' && expiresHours > 0 ? expiresHours : 168;
+    const expiresIn = `${hours}h`;
+
+    const payload = {
+      owner: owner,
+      projectId: req.params.project,
+      permission,
+      type: 'share_link',
+      singleUse,
+    };
+
+    const tokenShare = jwt.sign(payload, SHARE_SECRET, { expiresIn, jwtid: jti });
+    const shareLink = `${FRONTEND_URL}/share/access?token=${tokenShare}`;
+
+    res.status(200).jsonp({ success: true, link: shareLink, expiresAt: new Date(Date.now() + hours * 60 * 60 * 1000), singleUse });
+  } catch (err) {
+    console.error('Error generating share token', err);
+    res.status(500).jsonp({ error: 'Erro interno ao gerar link de partilha' });
+  }
+});
+
+// Fetch project by share token (public access using token)
+router.get('/share/project', function (req, res, next) {
+  const token = req.query.token;
+  if (!token) return res.status(400).jsonp({ error: 'Token em falta.' });
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    console.log('Decoded share token:', JSON.stringify(decoded));
+    if (decoded.type !== 'share_link') return res.status(403).jsonp({ error: 'Token inválido.' });
+
+    // Check single-use token state before proxying
+    if (decoded.singleUse && consumedShareJtis.has(decoded.jti)) {
+      return res.status(410).jsonp({ error: 'Este link de partilha já foi utilizado.' });
+    }
+
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}`;
+    console.log('Fetching shared project from:', targetUrl);
+
+    // Proxy internal request to projects microservice to fetch project data
+    axios
+      .get(targetUrl, { httpsAgent: httpsAgent })
+      .then((resp) => {
+        // Mark single-use token as consumed only after a successful fetch
+        if (decoded.singleUse && decoded.jti) {
+          consumedShareJtis.add(decoded.jti);
+        }
+        res.status(200).jsonp({ project: resp.data, permission: decoded.permission });
+      })
+      .catch((err) => {
+        try {
+          console.error('Error fetching project by share token - message:', err && err.message);
+          console.error('Error object keys:', Object.getOwnPropertyNames(err));
+          if (err && err.config) console.error('Axios config url:', err.config.url);
+          if (err && err.response) {
+            console.error('Upstream status:', err.response.status);
+            console.error('Upstream headers:', err.response.headers);
+            console.error('Upstream data:', err.response.data);
+          }
+          if (err && err.request) console.error('Request made but no response, request keys:', Object.keys(err.request || {}));
+          console.error('Full error stack:', err && err.stack ? err.stack : err);
+        } catch (logErr) {
+          console.error('Error while logging fetch error', logErr);
+        }
+        res.status(500).jsonp({ error: 'Erro ao obter projeto partilhado' });
+      });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') return res.status(410).jsonp({ error: 'Este link de partilha expirou.' });
+    return res.status(403).jsonp({ error: 'Link de partilha inválido.' });
+  }
 });
 
 /**

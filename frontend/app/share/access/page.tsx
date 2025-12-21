@@ -49,21 +49,13 @@ export default function ShareAccessPage() {
 
   function openProject() {
     if (!project || !permission) return;
-    // Redirect to dashboard route for project with query params to set mode and view
-    // If permission is 'view' open in mode=view (read-only) otherwise mode=edit
-    const mode = permission === "view" ? "results" : "edit";
-    // we need the owner id and project id
-    const owner = project.user_id || project.user || project.userId || project.user_id;
-    const pid = project._id;
-    if (!owner || !pid) {
+    // For shared access, open the dedicated share view which loads the project using the share token
+    if (!token) {
       toast({ title: "Não foi possível abrir o projeto partilhado.", variant: "destructive" });
       return;
     }
 
-    // Redirect to the dashboard project page (assumes route /dashboard/[pid]?mode=...&view=grid)
-    // For shared access, we will redirect to a special route that loads without checking session
-    // Simpler approach: open /dashboard/{pid}?mode=...&view=grid and let API gateway enforce access
-    router.push(`/dashboard/${pid}?mode=${mode}&view=grid&shared=true&permission=${permission}&token=${token}`);
+    router.push(`/share/view?token=${encodeURIComponent(token)}`);
   }
 
   if (loading) return <div className="flex h-screen items-center justify-center"><Loading /></div>;

@@ -4,11 +4,12 @@ import { LoginForm } from "@/components/authentication/login-form";
 import Image from "next/image";
 import { useEffect, useState, useLayoutEffect } from "react";
 import { useSession } from "@/providers/session-provider";
-import { redirect, RedirectType } from "next/navigation";
+import { redirect, RedirectType, useSearchParams } from "next/navigation";
 
 export default function Login() {
   const [seed, setSeed] = useState<number | null>(null);
   const session = useSession();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     setSeed(Math.floor(Math.random() * 100));
@@ -16,7 +17,9 @@ export default function Login() {
 
   useLayoutEffect(() => {
     if (session.user.type !== "anonymous") {
-      redirect("/dashboard", RedirectType.replace);
+      const returnTo = searchParams.get("returnTo");
+      if (returnTo) redirect(returnTo, RedirectType.replace);
+      else redirect("/dashboard", RedirectType.replace);
     }
   }, [session.user.type]);
 

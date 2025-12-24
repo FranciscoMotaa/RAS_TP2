@@ -244,6 +244,7 @@ export const shareProject = async ({
   expiresHours?: number;
   singleUse?: boolean;
 }) => {
+  console.log('API call shareProject payload', { uid, pid, permission, expiresHours, singleUse });
   const response = await api.post(
     `/projects/${uid}/${pid}/share`,
     { permission, expiresHours, singleUse },

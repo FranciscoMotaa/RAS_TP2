@@ -34,19 +34,18 @@ interface ImageItemProps {
 }
 
 export function ProjectImage({ image, animation = true }: ImageItemProps) {
-  const searchParams = useSearchParams();
-  const mode = searchParams.get("mode") ?? "edit";
+  const mode = useSearchParams().get("mode") ?? "edit";
 
   const [loaded, setLoaded] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
 
-  const { _id: pid } = useProjectInfo();
+  const projectInfo = useProjectInfo();
+  const { _id: pid } = projectInfo;
   const session = useSession();
-  const deleteImage = useDeleteProjectImages(
-    session.user._id,
-    pid as string,
-    session.token,
-  );
+  const shareToken = useSearchParams().get("shareToken");
+  const ownerId = shareToken ? (projectInfo?.user_id ?? session.user._id) : session.user._id;
+  const effectiveToken = shareToken ?? session.token;
+  const deleteImage = useDeleteProjectImages(ownerId, pid as string, effectiveToken);
   const downloadImage = useDownloadProjectImage(mode === "results");
   const { toast } = useToast();
 
@@ -142,9 +141,9 @@ export function ProjectImage({ image, animation = true }: ImageItemProps) {
             onClick={(e) => {
               deleteImage.mutate(
                 {
-                  uid: session.user._id,
+                  uid: ownerId,
                   pid: pid as string,
-                  token: session.token,
+                  token: effectiveToken,
                   imageIds: [image._id],
                 },
                 {

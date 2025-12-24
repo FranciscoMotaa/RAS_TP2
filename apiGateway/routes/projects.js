@@ -33,6 +33,56 @@ const projectsURL = "https://projects:9001/";
 const SHARE_SECRET = process.env.SHARE_SECRET || 'segredo_super_secreto_mudar_em_prod';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+// Resolve effective user id for proxying to projects service.
+// If the request includes a share token in Authorization header, prefer the owner from that token.
+function resolveUserForProxy(req) {
+  // 1) Check Authorization header for a share token
+  try {
+    const authHeader = req.headers["authorization"] || "";
+    const token = authHeader.split(" ")[1];
+    if (token) {
+      const decoded = jwt.verify(token, SHARE_SECRET);
+      if (decoded && decoded.type === 'share_link' && decoded.owner) return decoded.owner;
+    }
+  } catch (_) {}
+
+  // 2) Check query param `token` (used by share link endpoints)
+  try {
+    const qtoken = req.query && (req.query.token || req.query.shareToken);
+    if (qtoken) {
+      const decodedQ = jwt.verify(qtoken, SHARE_SECRET);
+      if (decodedQ && decodedQ.type === 'share_link' && decodedQ.owner) return decodedQ.owner;
+    }
+  } catch (_) {}
+
+  // 3) Check custom header `x-share-token`
+  try {
+    const xToken = req.headers['x-share-token'];
+    if (xToken) {
+      const decodedX = jwt.verify(xToken, SHARE_SECRET);
+      if (decodedX && decodedX.type === 'share_link' && decodedX.owner) return decodedX.owner;
+    }
+  } catch (_) {}
+
+  // 4) Check Referer URL for shareToken query param (frontend may not forward token header)
+  try {
+    const referer = req.headers.referer || req.headers.referrer;
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer);
+        const refererToken = refererUrl.searchParams.get('shareToken') || refererUrl.searchParams.get('token');
+        if (refererToken) {
+          const decodedR = jwt.verify(refererToken, SHARE_SECRET);
+          if (decodedR && decodedR.type === 'share_link' && decodedR.owner) return decodedR.owner;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  return req.params.user;
+}
+
+
 // TODO Verify jwt
 
 /*
@@ -100,7 +150,8 @@ router.get('/share/project', function (req, res, next) {
         if (decoded.singleUse && decoded.jti) {
           consumedShareJtis.add(decoded.jti);
         }
-        res.status(200).jsonp({ project: resp.data, permission: decoded.permission });
+        // Include owner id so frontend can perform actions on behalf of the original owner
+        res.status(200).jsonp({ project: resp.data, permission: decoded.permission, owner: decoded.owner });
       })
       .catch((err) => {
         try {
@@ -131,8 +182,9 @@ router.get('/share/project', function (req, res, next) {
  * @returns List of projects, each project has no information about it's images or tools
  */
 router.get("/:user", auth.checkToken, function (req, res, next) {
+  const proxyUser = resolveUserForProxy(req);
   axios
-    .get(projectsURL + `${req.params.user}`, { httpsAgent: httpsAgent })
+    .get(projectsURL + `${proxyUser}`, { httpsAgent: httpsAgent })
     .then((resp) => res.status(200).jsonp(resp.data))
     .catch((err) => res.status(500).jsonp("Error getting users"));
 });
@@ -143,8 +195,9 @@ router.get("/:user", auth.checkToken, function (req, res, next) {
  * @returns The required project
  */
 router.get("/:user/:project", auth.checkToken, function (req, res, next) {
+  const proxyUser = resolveUserForProxy(req);
   axios
-    .get(projectsURL + `${req.params.user}/${req.params.project}`, {
+    .get(projectsURL + `${proxyUser}/${req.params.project}`, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => res.status(200).jsonp(resp.data))
@@ -178,7 +231,11 @@ router.post('/:user/:project/share', auth.checkToken, function (req, res, next) 
       singleUse,
     };
 
+    console.log('Share link requested - req.body.permission:', req.body.permission, 'payload.permission:', permission);
     const tokenShare = jwt.sign(payload, SHARE_SECRET, { expiresIn, jwtid: jti });
+    // Log the token payload (decoded) to help debug permission mismatches
+    const decodedPreview = jwt.decode(tokenShare);
+    console.log('Signed share token payload preview:', JSON.stringify(decodedPreview));
     const shareLink = `${FRONTEND_URL}/share/access?token=${tokenShare}`;
 
     res.status(200).jsonp({ success: true, link: shareLink, expiresAt: new Date(Date.now() + hours * 60 * 60 * 1000), singleUse });
@@ -248,10 +305,11 @@ router.get(
   "/:user/:project/img/:img",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .get(
         projectsURL +
-          `${req.params.user}/${req.params.project}/img/${req.params.img}`,
+          `${proxyUser}/${req.params.project}/img/${req.params.img}`,
         {
           httpsAgent: httpsAgent,
         }
@@ -269,8 +327,9 @@ router.get(
  * @returns The project's images
  */
 router.get("/:user/:project/imgs", auth.checkToken, function (req, res, next) {
-  axios
-    .get(projectsURL + `${req.params.user}/${req.params.project}/imgs`, {
+    const proxyUser = resolveUserForProxy(req);
+    axios
+    .get(projectsURL + `${proxyUser}/${req.params.project}/imgs`, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => {
@@ -288,8 +347,9 @@ router.get(
   "/:user/:project/process",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
-      .get(projectsURL + `${req.params.user}/${req.params.project}/process`, {
+      .get(projectsURL + `${proxyUser}/${req.params.project}/process`, {
         httpsAgent: httpsAgent,
         responseType: "arraybuffer",
       })
@@ -309,9 +369,10 @@ router.get(
   "/:user/:project/process/url",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .get(
-        projectsURL + `${req.params.user}/${req.params.project}/process/url`,
+        projectsURL + `${proxyUser}/${req.params.project}/process/url`,
         {
           httpsAgent: httpsAgent,
         }
@@ -331,8 +392,9 @@ router.get(
  * @returns Created project's data
  */
 router.post("/:user", auth.checkToken, function (req, res, next) {
-  axios
-    .post(projectsURL + `${req.params.user}`, req.body, {
+    const proxyUser = resolveUserForProxy(req);
+    axios
+    .post(projectsURL + `${proxyUser}`, req.body, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => res.status(201).jsonp(resp.data))
@@ -348,10 +410,11 @@ router.post(
   "/:user/:project/preview/:img",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .post(
         projectsURL +
-          `${req.params.user}/${req.params.project}/preview/${req.params.img}`,
+          `${proxyUser}/${req.params.project}/preview/${req.params.img}`,
         req.body,
         { httpsAgent: httpsAgent }
       )
@@ -380,9 +443,10 @@ router.post(
       contentType: req.file.mimetype,
     });
 
+    const proxyUser = resolveUserForProxy(req);
     axios
       .post(
-        projectsURL + `${req.params.user}/${req.params.project}/img`,
+        projectsURL + `${proxyUser}/${req.params.project}/img`,
         data,
         {
           headers: {
@@ -402,9 +466,10 @@ router.post(
  * @returns Post answer structure in case of success
  */
 router.post("/:user/:project/tool", auth.checkToken, function (req, res, next) {
+  const proxyUser = resolveUserForProxy(req);
   axios
     .post(
-      projectsURL + `${req.params.user}/${req.params.project}/tool`,
+      projectsURL + `${proxyUser}/${req.params.project}/tool`,
       req.body,
       { httpsAgent: httpsAgent }
     )
@@ -421,9 +486,10 @@ router.post(
   "/:user/:project/reorder",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .post(
-        projectsURL + `${req.params.user}/${req.params.project}/reorder`,
+        projectsURL + `${proxyUser}/${req.params.project}/reorder`,
         req.body,
         { httpsAgent: httpsAgent }
       )
@@ -441,9 +507,10 @@ router.post(
   "/:user/:project/process",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .post(
-        projectsURL + `${req.params.user}/${req.params.project}/process`,
+        projectsURL + `${proxyUser}/${req.params.project}/process`,
         req.body,
         { httpsAgent: httpsAgent }
       )
@@ -460,8 +527,9 @@ router.post(
  * @returns Empty
  */
 router.put("/:user/:project", auth.checkToken, function (req, res, next) {
+  const proxyUser = resolveUserForProxy(req);
   axios
-    .put(projectsURL + `${req.params.user}/${req.params.project}`, req.body, {
+    .put(projectsURL + `${proxyUser}/${req.params.project}`, req.body, {
       httpsAgent: httpsAgent,
     })
     .then((_) => res.sendStatus(204))
@@ -477,10 +545,10 @@ router.put(
   "/:user/:project/tool/:tool",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .put(
-        projectsURL +
-          `${req.params.user}/${req.params.project}/tool/${req.params.tool}`,
+        projectsURL + `${proxyUser}/${req.params.project}/tool/${req.params.tool}`,
         req.body,
         { httpsAgent: httpsAgent }
       )
@@ -495,8 +563,9 @@ router.put(
  * @returns Empty
  */
 router.delete("/:user/:project", auth.checkToken, function (req, res, next) {
+  const proxyUser = resolveUserForProxy(req);
   axios
-    .delete(projectsURL + `${req.params.user}/${req.params.project}`, {
+    .delete(projectsURL + `${proxyUser}/${req.params.project}`, {
       httpsAgent: httpsAgent,
     })
     .then((_) => res.sendStatus(204))
@@ -512,10 +581,11 @@ router.delete(
   "/:user/:project/img/:img",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .delete(
         projectsURL +
-          `${req.params.user}/${req.params.project}/img/${req.params.img}`,
+          `${proxyUser}/${req.params.project}/img/${req.params.img}`,
         { httpsAgent: httpsAgent }
       )
       .then((_) => res.sendStatus(204))
@@ -534,10 +604,11 @@ router.delete(
   "/:user/:project/tool/:tool",
   auth.checkToken,
   function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
     axios
       .delete(
         projectsURL +
-          `${req.params.user}/${req.params.project}/tool/${req.params.tool}`,
+          `${proxyUser}/${req.params.project}/tool/${req.params.tool}`,
         { httpsAgent: httpsAgent }
       )
       .then((_) => res.sendStatus(204))

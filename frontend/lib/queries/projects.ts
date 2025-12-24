@@ -19,6 +19,7 @@ export const useGetProject = (uid: string, pid: string, token: string) => {
   return useQuery({
     queryKey: ["project", uid, pid, token],
     queryFn: () => fetchProject(uid, pid, token),
+    enabled: !!uid,
   });
 };
 
@@ -32,6 +33,7 @@ export const useGetProjectImages = (
     queryKey: ["projectImages", uid, pid, token],
     queryFn: () => getProjectImages(uid, pid, token),
     initialData: initialData,
+    enabled: !!uid,
   });
 };
 
@@ -57,5 +59,6 @@ export const useGetProjectResults = (
   return useQuery({
     queryKey: ["projectResults", uid, pid, token],
     queryFn: () => fetchProjectResults(uid, pid, token),
+    enabled: !!uid,
   });
 };

@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { LoaderCircle, OctagonAlert } from "lucide-react";
 import { useLogin } from "@/lib/mutations/session";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 
 export function LoginForm({
@@ -21,6 +21,7 @@ export function LoginForm({
   const [showError, setShowError] = useState<boolean>(false);
   const login = useLogin();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
 
   useEffect(() => {
@@ -33,11 +34,14 @@ export function LoginForm({
     setShowError(true);
     if (error) return;
 
+    const returnTo = searchParams.get("returnTo") || undefined;
+
     login.mutate(
       { email, password },
       {
         onSuccess: () => {
-          router.replace("/dashboard");
+          if (returnTo) router.replace(returnTo);
+          else router.replace("/dashboard");
         },
         onError: (error) => {
           toast({

@@ -27,6 +27,7 @@ import { Progress } from "@/components/ui/progress";
 import { Card } from "@/components/ui/card";
 import { Transition } from "@headlessui/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { api } from "@/lib/axios";
 import { useQueryClient } from "@tanstack/react-query";
 import { ModeToggle } from "@/components/project-page/mode-toggle";
 import ShareModal from "@/components/project-page/share-modal";
@@ -41,13 +42,19 @@ export default function Project({
   const resolvedParams = use(params);
   const session = useSession();
   const { pid } = resolvedParams;
-  const project = useGetProject(session.user._id, pid, session.token);
+  const searchParams = useSearchParams();
+  const shareToken = searchParams.get("shareToken");
+  const project = useGetProject(shareToken ? "" : session.user._id, pid, session.token);
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedError, setSharedError] = useState<string | null>(null);
+  const [sharedProject, setSharedProject] = useState<any | null>(null);
+  const [sharedOwner, setSharedOwner] = useState<string | null>(null);
+  const [sharedPermission, setSharedPermission] = useState<"view" | "edit" | null>(null);
   const downloadProjectImages = useDownloadProject();
   const processProject = useProcessProject();
   const downloadProjectResults = useDownloadProjectResults();
   const { toast } = useToast();
   const socket = useGetSocket(session.token);
-  const searchParams = useSearchParams();
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
   const router = useRouter();
@@ -61,12 +68,25 @@ export default function Project({
   const [waitingForPreview, setWaitingForPreview] = useState<string>("");
 
   const totalProcessingSteps =
-    (project.data?.tools.length ?? 0) * (project.data?.imgs.length ?? 0);
-  const projectResults = useGetProjectResults(
-    session.user._id,
-    pid,
-    session.token,
-  );
+    ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
+  const projectResults = useGetProjectResults(shareToken ? "" : session.user._id, pid, session.token);
+  
+  useEffect(() => {
+    if (!shareToken) return;
+    setSharedLoading(true);
+    api
+      .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
+        .then((resp) => {
+          setSharedProject(resp.data.project);
+          setSharedPermission(resp.data.permission);
+          setSharedOwner(resp.data.owner ?? null);
+          setSharedLoading(false);
+        })
+      .catch((err) => {
+        setSharedError(err?.response?.data?.error || err.message || "Erro ao carregar projeto partilhado");
+        setSharedLoading(false);
+      });
+  }, [shareToken]);
   const qc = useQueryClient();
 
   useLayoutEffect(() => {
@@ -116,7 +136,6 @@ export default function Project({
   }, [
     pid,
     processingSteps,
-    qc,
     router,
     session.token,
     session.user._id,
@@ -126,6 +145,26 @@ export default function Project({
     isMobile,
     projectResults,
   ]);
+
+  if (shareToken) {
+    if (sharedLoading)
+      return (
+        <div className="flex justify-center items-center h-screen">
+          <Loading />
+        </div>
+      );
+
+    if (sharedError)
+      return (
+        <div className="flex size-full justify-center items-center h-screen p-8">
+          <Alert variant="destructive" className="w-fit max-w-[40rem] text-wrap truncate">
+            <OctagonAlert className="size-4" />
+            <AlertTitle>Erro</AlertTitle>
+            <AlertDescription>{sharedError}</AlertDescription>
+          </Alert>
+        </div>
+      );
+  }
 
   if (project.isError)
     return (
@@ -142,20 +181,36 @@ export default function Project({
     );
 
   if (
-    project.isLoading ||
-    !project.data ||
-    projectResults.isLoading ||
-    !projectResults.data
+    (!shareToken && (project.isLoading || !project.data || projectResults.isLoading || !projectResults.data))
   )
     return (
       <div className="flex justify-center items-center h-screen">
         <Loading />
       </div>
     );
+  // Normalize project object given to ProjectProvider so code can safely assume
+  // `tools` and `imgs` are arrays (avoid runtime `cannot read property 'tools' of null`).
+  const currentProjectData = shareToken
+    ? {
+        ...(sharedProject || {}),
+        // ensure user_id is set to owner so downstream hooks call the correct uid
+        user_id: sharedOwner ?? sharedProject?.user_id ?? null,
+        tools: sharedProject?.tools ?? [],
+        imgs: sharedProject?.imgs ?? [],
+      }
+    : {
+        ...(project.data || {}),
+        tools: project.data?.tools ?? [],
+        imgs: project.data?.imgs ?? [],
+      };
+
+  const currentProjectResults = shareToken
+    ? { imgs: currentProjectData.imgs ?? [], texts: [] }
+    : projectResults.data ?? { imgs: [], texts: [] };
 
   return (
     <ProjectProvider
-      project={project.data}
+      project={currentProjectData}
       currentImage={currentImage}
       preview={{ waiting: waitingForPreview, setWaiting: setWaitingForPreview }}
     >
@@ -164,7 +219,7 @@ export default function Project({
         <div className="flex flex-col xl:flex-row justify-center items-start xl:items-center xl:justify-between border-b border-sidebar-border py-2 px-2 md:px-3 xl:px-4 h-fit gap-2">
           <div className="flex items-center justify-between w-full xl:w-auto gap-2">
             <h1 className="text-lg font-semibold truncate">
-              {project.data.name}
+              {currentProjectData?.name}
             </h1>
             <div className="flex items-center gap-2 xl:hidden">
               <ViewToggle />
@@ -178,14 +233,15 @@ export default function Project({
                 <>
                   <Button
                     disabled={
-                      project.data.tools.length <= 0 || waitingForPreview !== ""
+                      currentProjectData.tools?.length <= 0 || waitingForPreview !== ""
                     }
                     className="inline-flex"
                     onClick={() => {
+                      const effectiveUid = shareToken ? (sharedOwner ?? session.user._id) : session.user._id;
                       processProject.mutate(
                         {
-                          uid: session.user._id,
-                          pid: project.data._id,
+                          uid: effectiveUid,
+                          pid: currentProjectData._id,
                           token: session.token,
                         },
                         {
@@ -205,7 +261,8 @@ export default function Project({
                   >
                     <Play /> Apply
                   </Button>
-                  <AddImagesDialog />
+                  {/* Hide add images when viewing a shared project with view-only permission */}
+                  {!(shareToken && sharedPermission === "view") && <AddImagesDialog />}
                 </>
               )}
               <Button
@@ -218,15 +275,15 @@ export default function Project({
                     : downloadProjectResults
                   ).mutate(
                     {
-                      uid: session.user._id,
-                      pid: project.data._id,
-                      token: session.token,
-                      projectName: project.data.name,
+                      uid: shareToken ? (sharedOwner ?? session.user._id) : session.user._id,
+                      pid: currentProjectData._id,
+                      token: shareToken ?? session.token,
+                      projectName: currentProjectData?.name,
                     },
                     {
                       onSuccess: () => {
                         toast({
-                          title: `Project ${project.data.name} downloaded.`,
+                          title: `Project ${currentProjectData?.name} downloaded.`,
                         });
                       },
                     },
@@ -252,11 +309,8 @@ export default function Project({
         </div>
         {/* Main Content */}
         <div className="h-full overflow-x-hidden flex">
-          {mode !== "results" && <Toolbar />}
-          <ProjectImageList
-            setCurrentImageId={setCurrentImage}
-            results={projectResults.data}
-          />
+          {mode !== "results" && !(shareToken && sharedPermission === "view") && <Toolbar />}
+          <ProjectImageList setCurrentImageId={setCurrentImage} results={currentProjectResults} />
         </div>
       </div>
       <Transition

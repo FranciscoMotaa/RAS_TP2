@@ -62,6 +62,7 @@ export default function ShareModal() {
   }
 
   function handleGenerate() {
+    console.log('Generating share link with', { permission, expiresHours, singleUse });
     shareProject.mutate(
       { permission, expiresHours, singleUse },
       {

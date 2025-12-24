@@ -7,6 +7,7 @@ import { api } from "@/lib/axios";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { useSession } from "@/providers/session-provider";
 
 export default function ShareViewPage() {
   const searchParams = useSearchParams();
@@ -17,6 +18,7 @@ export default function ShareViewPage() {
   const [permission, setPermission] = useState<"view" | "edit" | null>(null);
   const [project, setProject] = useState<any | null>(null);
   const { toast } = useToast();
+  const session = useSession();
 
   useEffect(() => {
     if (!token) {
@@ -45,6 +47,16 @@ export default function ShareViewPage() {
       });
   }, [token]);
 
+  useEffect(() => {
+    if (!loading && (permission === "edit" || permission === "view") && project) {
+      // If the current user is logged in (not anonymous), open project in dashboard
+      if (session && session.user && session.user.type !== "anonymous") {
+        router.replace(`/dashboard/${project._id}?shareToken=${encodeURIComponent(token!)}`);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, permission, project]);
+
   if (loading) return <div className="flex h-screen items-center justify-center"><Loading /></div>;
 
   if (error)
@@ -66,8 +78,10 @@ export default function ShareViewPage() {
         <Card className="p-6">
           <h2 className="text-xl font-semibold">{project.name}</h2>
           <p className="mt-1 text-sm text-muted-foreground">Permissão: {permission}</p>
-          {permission === 'edit' && (
-            <div className="mt-2 text-sm text-amber-600">Este link permite edição — é necessário iniciar sessão para editar.</div>
+          {permission === "edit" && session && session.user && session.user.type === "anonymous" && (
+            <div className="mt-2 text-sm text-amber-600">
+              Este link permite edição — é necessário iniciar sessão para editar.
+            </div>
           )}
 
           <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -86,6 +100,9 @@ export default function ShareViewPage() {
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="outline" onClick={() => router.push('/')}>Voltar</Button>
             <Button onClick={() => { navigator.clipboard.writeText(window.location.href); toast({ title: 'URL copiada.' }); }}>Copiar link</Button>
+            {permission === 'edit' && session && session.user && session.user.type === 'anonymous' && (
+              <Button onClick={() => router.push(`/login?returnTo=${encodeURIComponent(window.location.href)}`)} className="ml-2">Iniciar sessão para continuar</Button>
+            )}
           </div>
         </Card>
       </div>

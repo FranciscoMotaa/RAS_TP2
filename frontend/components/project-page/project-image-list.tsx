@@ -165,7 +165,10 @@ export function ProjectImageList({
                         className="aspect-square"
                         onClick={() => {
                           setJumpTo(index);
-                          router.push(`?mode=${mode}&view=carousel`);
+                          const params = new URLSearchParams(searchParams.toString());
+                          params.set("mode", mode);
+                          params.set("view", "carousel");
+                          router.push(`?${params.toString()}`);
                           qc.invalidateQueries({
                             queryKey: ["socket"],
                             refetchType: "all",
@@ -187,7 +190,10 @@ export function ProjectImageList({
                               ? results.imgs.length
                               : project.imgs.length) + index,
                           );
-                          router.push(`?mode=${mode}&view=carousel`);
+                          const params = new URLSearchParams(searchParams.toString());
+                          params.set("mode", mode);
+                          params.set("view", "carousel");
+                          router.push(`?${params.toString()}`);
                           qc.invalidateQueries({
                             queryKey: ["socket"],
                             refetchType: "all",

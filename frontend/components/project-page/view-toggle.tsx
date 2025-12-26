@@ -15,7 +15,12 @@ export function ViewToggle() {
       <Button
         variant={view === "grid" ? "default" : "secondary"}
         size="icon"
-        onClick={() => router.push(`?mode=${mode}&view=grid`)}
+        onClick={() => {
+          const params = new URLSearchParams(searchParams.toString());
+          params.set("mode", mode);
+          params.set("view", "grid");
+          router.push(`?${params.toString()}`);
+        }}
         aria-label="Grid view"
         aria-pressed={view === "grid"}
         className="size-8"
@@ -26,7 +31,12 @@ export function ViewToggle() {
       <Button
         variant={view === "carousel" ? "default" : "secondary"}
         size="icon"
-        onClick={() => router.push(`?mode=${mode}&view=carousel`)}
+        onClick={() => {
+          const params = new URLSearchParams(searchParams.toString());
+          params.set("mode", mode);
+          params.set("view", "carousel");
+          router.push(`?${params.toString()}`);
+        }}
         aria-label="Carousel view"
         aria-pressed={view === "carousel"}
         className="size-8"

@@ -69,7 +69,9 @@ export default function Project({
 
   const totalProcessingSteps =
     ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
-  const projectResults = useGetProjectResults(shareToken ? "" : session.user._id, pid, session.token);
+  const resultsUid = shareToken ? "share" : session.user._id;
+  const resultsToken = shareToken ?? session.token;
+  const projectResults = useGetProjectResults(resultsUid, pid, resultsToken);
   
   useEffect(() => {
     if (!shareToken) return;
@@ -115,7 +117,10 @@ export default function Project({
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
-            router.push("?mode=results&view=grid");
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("mode", "results");
+            params.set("view", "grid");
+            router.push(`?${params.toString()}`);
           });
         }, 2000);
       }
@@ -144,6 +149,7 @@ export default function Project({
     sidebar,
     isMobile,
     projectResults,
+    searchParams,
   ]);
 
   if (shareToken) {
@@ -205,7 +211,7 @@ export default function Project({
       };
 
   const currentProjectResults = shareToken
-    ? { imgs: currentProjectData.imgs ?? [], texts: [] }
+    ? projectResults.data ?? { imgs: currentProjectData.imgs ?? [], texts: [] }
     : projectResults.data ?? { imgs: [], texts: [] };
 
   return (

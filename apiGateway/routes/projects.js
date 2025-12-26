@@ -36,6 +36,15 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 // Resolve effective user id for proxying to projects service.
 // If the request includes a share token in Authorization header, prefer the owner from that token.
 function resolveUserForProxy(req) {
+  // Prefer explicit share token string (header or query) and use its owner if valid
+  try {
+    const st = getShareTokenString(req);
+    if (st) {
+      const decodedSt = jwt.verify(st, SHARE_SECRET);
+      if (decodedSt && decodedSt.type === 'share_link' && decodedSt.owner) return decodedSt.owner;
+    }
+  } catch (_) {}
+
   // 1) Check Authorization header for a share token
   try {
     const authHeader = req.headers["authorization"] || "";
@@ -80,6 +89,182 @@ function resolveUserForProxy(req) {
   } catch (_) {}
 
   return req.params.user;
+}
+
+// If verify didn't return an owner, try a safe decode: only accept decoded.owner
+// when decoded.projectId equals the requested project (avoids mistaking session JWTs).
+function resolveUserForProxySafeDecode(req) {
+  try {
+    const st = getShareTokenString(req);
+    if (!st) return req.params.user;
+    const preview = jwt.decode(st);
+    if (preview && preview.projectId && String(preview.projectId) === String(req.params.project) && preview.owner)
+      return preview.owner;
+  } catch (_) {}
+  return req.params.user;
+}
+
+  // Fallback resolver: try to jwt.decode (no verify) and read owner field
+  function resolveUserForProxyWithDecodeFallback(req) {
+    try {
+      const st = getShareTokenString(req);
+      if (st) {
+        try {
+          const preview = jwt.decode(st);
+          if (preview && preview.owner) return preview.owner;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return req.params.user;
+  }
+
+// Helper to extract raw share token string from the request (Authorization, query, x-share-token or Referer)
+function getShareTokenString(req) {
+  // Authorization header
+  // explicit header first (prefer explicit share header)
+  try {
+    if (req.headers['x-share-token']) {
+      const raw = req.headers['x-share-token'];
+      return typeof raw === 'string' ? raw.trim().replace(/^"|"$/g, '') : raw;
+    }
+  } catch (_) {}
+
+  // query param next
+  try {
+    const q = req.query && (req.query.token || req.query.shareToken);
+    if (q) return q;
+  } catch (_) {}
+
+  // Authorization header last
+  try {
+    const authHeader = req.headers['authorization'] || '';
+    const maybe = authHeader.split(' ')[1];
+    if (maybe) return maybe;
+  } catch (_) {}
+
+  // referer URL
+  try {
+    const referer = req.headers.referer || req.headers.referrer;
+    if (referer) {
+      const url = new URL(referer);
+      const t = url.searchParams.get('shareToken') || url.searchParams.get('token');
+      if (t) return typeof t === 'string' ? t.trim().replace(/^"|"$/g, '') : t;
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+// Build axios options merging httpsAgent and optionally forwarding share token as x-share-token
+function axiosProxyOptions(req, extra) {
+  const options = Object.assign({}, extra || {});
+  options.httpsAgent = httpsAgent;
+  options.headers = options.headers || {};
+  // Determine where (if anywhere) the incoming share token originated.
+  const headerToken = req.headers['x-share-token'];
+  const queryToken = req.query && (req.query.token || req.query.shareToken);
+  const authHeader = req.headers['authorization'] || '';
+  const authToken = authHeader.split(' ')[1];
+  const st = headerToken || queryToken || authToken;
+  const stSource = headerToken ? 'header' : queryToken ? 'query' : authToken ? 'auth' : null;
+  if (st) {
+    try {
+      const preview = jwt.decode(st);
+      try {
+        console.log('axiosProxyOptions: found raw share token length=', (st && st.length) || 0, 'previewType=', preview && preview.type, 'previewOwner=', preview && preview.owner, 'source=', stSource);
+      } catch (_) {}
+      // Forward x-share-token when it looks like a share link token.
+      // Prefer explicit tokens from header/query; allow Authorization when
+      // it contains a share_link (so frontend can send share token as Bearer).
+      const isShare = preview && preview.type === 'share_link' && preview.owner;
+      if (isShare && (stSource === 'header' || stSource === 'query' || stSource === 'auth')) {
+        options.headers['x-share-token'] = st;
+      } else {
+        try { console.log('axiosProxyOptions: not forwarding token (not a share_link or not accepted source)'); } catch (_) {}
+      }
+    } catch (e) {
+      try { console.log('axiosProxyOptions: jwt.decode failed', e && e.message); } catch (_) {}
+    }
+  }
+  return options;
+}
+
+function axiosGet(req, url, extra) {
+  const opts = axiosProxyOptions(req, extra);
+  try {
+    // If a share token is present, prefer routing to the token owner (decode-only fallback)
+    try {
+      const st = getShareTokenString(req);
+      if (st) {
+        try {
+          const preview = jwt.decode(st);
+          if (preview && preview.owner) {
+            // Replace the first user segment in the projects URL with the owner
+            url = url.replace(new RegExp(projectsURL + "[^/]+"), projectsURL + preview.owner);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    console.log('Proxy GET ->', url, 'x-share-token present=', !!opts.headers['x-share-token']);
+  } catch (_) {}
+  return axios.get(url, opts);
+}
+
+function axiosPost(req, url, data, extra) {
+  const opts = axiosProxyOptions(req, extra);
+  try {
+    try {
+      const st = getShareTokenString(req);
+      if (st) {
+        try {
+          const preview = jwt.decode(st);
+          if (preview && preview.owner) {
+            url = url.replace(new RegExp(projectsURL + "[^/]+"), projectsURL + preview.owner);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    console.log('Proxy POST ->', url, 'x-share-token present=', !!opts.headers['x-share-token']);
+  } catch (_) {}
+  return axios.post(url, data, opts);
+}
+
+function axiosPut(req, url, data, extra) {
+  const opts = axiosProxyOptions(req, extra);
+  try {
+    try {
+      const st = getShareTokenString(req);
+      if (st) {
+        try {
+          const preview = jwt.decode(st);
+          if (preview && preview.owner) {
+            url = url.replace(new RegExp(projectsURL + "[^/]+"), projectsURL + preview.owner);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    console.log('Proxy PUT ->', url, 'x-share-token present=', !!opts.headers['x-share-token']);
+  } catch (_) {}
+  return axios.put(url, data, opts);
+}
+
+function axiosDelete(req, url, extra) {
+  const opts = axiosProxyOptions(req, extra);
+  try {
+    try {
+      const st = getShareTokenString(req);
+      if (st) {
+        try {
+          const preview = jwt.decode(st);
+          if (preview && preview.owner) {
+            url = url.replace(new RegExp(projectsURL + "[^/]+"), projectsURL + preview.owner);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    console.log('Proxy DELETE ->', url, 'x-share-token present=', !!opts.headers['x-share-token']);
+  } catch (_) {}
+  return axios.delete(url, opts);
 }
 
 
@@ -143,8 +328,7 @@ router.get('/share/project', function (req, res, next) {
     console.log('Fetching shared project from:', targetUrl);
 
     // Proxy internal request to projects microservice to fetch project data
-    axios
-      .get(targetUrl, { httpsAgent: httpsAgent })
+    axiosGet(req, targetUrl, { httpsAgent: httpsAgent })
       .then((resp) => {
         // Mark single-use token as consumed only after a successful fetch
         if (decoded.singleUse && decoded.jti) {
@@ -182,9 +366,15 @@ router.get('/share/project', function (req, res, next) {
  * @returns List of projects, each project has no information about it's images or tools
  */
 router.get("/:user", auth.checkToken, function (req, res, next) {
-  const proxyUser = resolveUserForProxy(req);
-  axios
-    .get(projectsURL + `${proxyUser}`, { httpsAgent: httpsAgent })
+  let proxyUser = resolveUserForProxy(req);
+  if (proxyUser === req.params.user) {
+    try {
+      const st = getShareTokenString(req);
+      const preview = st ? jwt.decode(st) : null;
+      if (preview && preview.owner) proxyUser = preview.owner;
+    } catch (_) {}
+  }
+  axiosGet(req, projectsURL + `${proxyUser}`, { httpsAgent: httpsAgent })
     .then((resp) => res.status(200).jsonp(resp.data))
     .catch((err) => res.status(500).jsonp("Error getting users"));
 });
@@ -195,9 +385,15 @@ router.get("/:user", auth.checkToken, function (req, res, next) {
  * @returns The required project
  */
 router.get("/:user/:project", auth.checkToken, function (req, res, next) {
-  const proxyUser = resolveUserForProxy(req);
-  axios
-    .get(projectsURL + `${proxyUser}/${req.params.project}`, {
+  let proxyUser = resolveUserForProxy(req);
+  if (proxyUser === req.params.user) {
+    try {
+      const st = getShareTokenString(req);
+      const preview = st ? jwt.decode(st) : null;
+      if (preview && preview.owner) proxyUser = preview.owner;
+    } catch (_) {}
+  }
+  axiosGet(req, projectsURL + `${proxyUser}/${req.params.project}`, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => res.status(200).jsonp(resp.data))
@@ -306,14 +502,9 @@ router.get(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .get(
-        projectsURL +
-          `${proxyUser}/${req.params.project}/img/${req.params.img}`,
-        {
-          httpsAgent: httpsAgent,
-        }
-      )
+    axiosGet(req, projectsURL + `${proxyUser}/${req.params.project}/img/${req.params.img}`, {
+        httpsAgent: httpsAgent,
+      })
       .then((resp) => {
         res.status(200).send(resp.data);
       })
@@ -328,8 +519,7 @@ router.get(
  */
 router.get("/:user/:project/imgs", auth.checkToken, function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-    .get(projectsURL + `${proxyUser}/${req.params.project}/imgs`, {
+    axiosGet(req, projectsURL + `${proxyUser}/${req.params.project}/imgs`, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => {
@@ -348,8 +538,7 @@ router.get(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .get(projectsURL + `${proxyUser}/${req.params.project}/process`, {
+    axiosGet(req, projectsURL + `${proxyUser}/${req.params.project}/process`, {
         httpsAgent: httpsAgent,
         responseType: "arraybuffer",
       })
@@ -370,13 +559,9 @@ router.get(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .get(
-        projectsURL + `${proxyUser}/${req.params.project}/process/url`,
-        {
+    axiosGet(req, projectsURL + `${proxyUser}/${req.params.project}/process/url`, {
           httpsAgent: httpsAgent,
-        }
-      )
+        })
       .then((resp) => {
         res.status(200).send(resp.data);
       })
@@ -393,8 +578,7 @@ router.get(
  */
 router.post("/:user", auth.checkToken, function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-    .post(projectsURL + `${proxyUser}`, req.body, {
+    axiosPost(req, projectsURL + `${proxyUser}`, req.body, {
       httpsAgent: httpsAgent,
     })
     .then((resp) => res.status(201).jsonp(resp.data))
@@ -411,13 +595,7 @@ router.post(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .post(
-        projectsURL +
-          `${proxyUser}/${req.params.project}/preview/${req.params.img}`,
-        req.body,
-        { httpsAgent: httpsAgent }
-      )
+    axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/preview/${req.params.img}`, req.body, { httpsAgent: httpsAgent })
       .then((resp) => res.status(201).jsonp(resp.data))
       .catch((err) => {
         console.log(err);
@@ -444,17 +622,12 @@ router.post(
     });
 
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .post(
-        projectsURL + `${proxyUser}/${req.params.project}/img`,
-        data,
-        {
+    axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/img`, data, {
           headers: {
             "Content-Type": "multipart/form-data",
           },
           httpsAgent: httpsAgent,
-        }
-      )
+        })
       .then((resp) => res.sendStatus(201))
       .catch((err) => res.status(500).jsonp("Error adding image to project"));
   }
@@ -466,13 +639,15 @@ router.post(
  * @returns Post answer structure in case of success
  */
 router.post("/:user/:project/tool", auth.checkToken, function (req, res, next) {
-  const proxyUser = resolveUserForProxy(req);
-  axios
-    .post(
-      projectsURL + `${proxyUser}/${req.params.project}/tool`,
-      req.body,
-      { httpsAgent: httpsAgent }
-    )
+  let proxyUser = resolveUserForProxy(req);
+  if (proxyUser === req.params.user) {
+    try {
+      const st = getShareTokenString(req);
+      const preview = st ? jwt.decode(st) : null;
+      if (preview && preview.owner) proxyUser = preview.owner;
+    } catch (_) {}
+  }
+  axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/tool`, req.body, { httpsAgent: httpsAgent })
     .then((resp) => res.status(201).jsonp(resp.data))
     .catch((err) => res.status(500).jsonp("Error adding tool to project"));
 });
@@ -487,12 +662,7 @@ router.post(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .post(
-        projectsURL + `${proxyUser}/${req.params.project}/reorder`,
-        req.body,
-        { httpsAgent: httpsAgent }
-      )
+    axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/reorder`, req.body, { httpsAgent: httpsAgent })
       .then((resp) => res.status(201).jsonp(resp.data))
       .catch((err) => res.status(500).jsonp("Error reordering tools"));
   }
@@ -508,12 +678,7 @@ router.post(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .post(
-        projectsURL + `${proxyUser}/${req.params.project}/process`,
-        req.body,
-        { httpsAgent: httpsAgent }
-      )
+    axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/process`, req.body, { httpsAgent: httpsAgent })
       .then((resp) => res.status(201).jsonp(resp.data))
       .catch((err) =>
         res.status(500).jsonp("Error requesting project processing")
@@ -527,9 +692,15 @@ router.post(
  * @returns Empty
  */
 router.put("/:user/:project", auth.checkToken, function (req, res, next) {
-  const proxyUser = resolveUserForProxy(req);
-  axios
-    .put(projectsURL + `${proxyUser}/${req.params.project}`, req.body, {
+  let proxyUser = resolveUserForProxy(req);
+  if (proxyUser === req.params.user) {
+    try {
+      const st = getShareTokenString(req);
+      const preview = st ? jwt.decode(st) : null;
+      if (preview && preview.owner) proxyUser = preview.owner;
+    } catch (_) {}
+  }
+  axiosPut(req, projectsURL + `${proxyUser}/${req.params.project}`, req.body, {
       httpsAgent: httpsAgent,
     })
     .then((_) => res.sendStatus(204))
@@ -546,12 +717,7 @@ router.put(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .put(
-        projectsURL + `${proxyUser}/${req.params.project}/tool/${req.params.tool}`,
-        req.body,
-        { httpsAgent: httpsAgent }
-      )
+    axiosPut(req, projectsURL + `${proxyUser}/${req.params.project}/tool/${req.params.tool}`, req.body, { httpsAgent: httpsAgent })
       .then((_) => res.sendStatus(204))
       .catch((err) => res.status(500).jsonp("Error updating tool params"));
   }
@@ -563,9 +729,15 @@ router.put(
  * @returns Empty
  */
 router.delete("/:user/:project", auth.checkToken, function (req, res, next) {
-  const proxyUser = resolveUserForProxy(req);
-  axios
-    .delete(projectsURL + `${proxyUser}/${req.params.project}`, {
+  let proxyUser = resolveUserForProxy(req);
+  if (proxyUser === req.params.user) {
+    try {
+      const st = getShareTokenString(req);
+      const preview = st ? jwt.decode(st) : null;
+      if (preview && preview.owner) proxyUser = preview.owner;
+    } catch (_) {}
+  }
+  axiosDelete(req, projectsURL + `${proxyUser}/${req.params.project}`, {
       httpsAgent: httpsAgent,
     })
     .then((_) => res.sendStatus(204))
@@ -582,12 +754,7 @@ router.delete(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .delete(
-        projectsURL +
-          `${proxyUser}/${req.params.project}/img/${req.params.img}`,
-        { httpsAgent: httpsAgent }
-      )
+    axiosDelete(req, projectsURL + `${proxyUser}/${req.params.project}/img/${req.params.img}`, { httpsAgent: httpsAgent })
       .then((_) => res.sendStatus(204))
       .catch((err) =>
         res.status(500).jsonp("Error deleting image from project")
@@ -605,12 +772,7 @@ router.delete(
   auth.checkToken,
   function (req, res, next) {
     const proxyUser = resolveUserForProxy(req);
-    axios
-      .delete(
-        projectsURL +
-          `${proxyUser}/${req.params.project}/tool/${req.params.tool}`,
-        { httpsAgent: httpsAgent }
-      )
+    axiosDelete(req, projectsURL + `${proxyUser}/${req.params.project}/tool/${req.params.tool}`, { httpsAgent: httpsAgent })
       .then((_) => res.sendStatus(204))
       .catch((err) =>
         res.status(500).jsonp("Error removing tool from project")

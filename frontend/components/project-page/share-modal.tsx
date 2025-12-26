@@ -67,7 +67,8 @@ export default function ShareModal() {
       { permission, expiresHours, singleUse },
       {
         onSuccess: (data: any) => {
-          setResultLink(data.link);
+          // API returns { success: true, link, expiresAt, singleUse }
+          setResultLink(data && data.link ? data.link : null);
           setStage("result");
         },
         onError: (error: any) =>

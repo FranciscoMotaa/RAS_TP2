@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   useCurrentImage,
   usePreview,
@@ -25,6 +26,7 @@ import { ProjectTool, ProjectToolResponse } from "@/lib/projects";
 import { toast } from "@/hooks/use-toast";
 import { useGetSocket } from "@/lib/queries/projects";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { jwtDecode } from "jwt-decode";
 
 interface ToolbarButtonProps {
   open?: boolean;
@@ -56,6 +58,22 @@ export function ToolbarButton({
   const router = useRouter();
   const session = useSession();
   const project = useProjectInfo();
+  const params = useSearchParams();
+  const shareToken = params.get("shareToken") ?? params.get("token");
+  
+  // Extract owner from share token if present; otherwise use owner from project or session
+  let ownerId = session.user._id;
+  if (shareToken) {
+    try {
+      const decoded = jwtDecode<{ owner?: string }>(shareToken);
+      if (decoded.owner) ownerId = decoded.owner;
+    } catch (e) {
+      // If token fails to decode, fall back to project.user_id or session
+      ownerId = project.user_id ?? session.user._id;
+    }
+  }
+  
+  const effectiveToken = shareToken ?? session.token;
   const preview = usePreview();
   const variant =
     project.tools.find((t) => t.procedure === tool.procedure) !== undefined
@@ -64,21 +82,9 @@ export function ToolbarButton({
   const socket = useGetSocket(session.token);
 
   const currentImage = useCurrentImage();
-  const addTool = useAddProjectTool(
-    session.user._id,
-    project._id,
-    session.token,
-  );
-  const updateTool = useUpdateProjectTool(
-    session.user._id,
-    project._id,
-    session.token,
-  );
-  const deleteTool = useDeleteProjectTool(
-    session.user._id,
-    project._id,
-    session.token,
-  );
+  const addTool = useAddProjectTool(ownerId, project._id, effectiveToken);
+  const updateTool = useUpdateProjectTool(ownerId, project._id, effectiveToken);
+  const deleteTool = useDeleteProjectTool(ownerId, project._id, effectiveToken);
   const previewEdits = usePreviewProjectResult();
 
   const [prevTool, setPrevTool] = useState<ProjectToolResponse | undefined>(
@@ -91,10 +97,10 @@ export function ToolbarButton({
     if (prevTool) {
       deleteTool.mutate(
         {
-          uid: session.user._id,
+          uid: ownerId,
           pid: project._id,
           toolId: prevTool._id,
-          token: session.token,
+          token: effectiveToken,
         },
         {
           onError: (error) => {
@@ -112,10 +118,10 @@ export function ToolbarButton({
   function handlePreview() {
     previewEdits.mutate(
       {
-        uid: session.user._id,
+        uid: ownerId,
         pid: project._id,
         imageId: currentImage?._id ?? "",
-        token: session.token,
+        token: effectiveToken,
       },
       {
         onSuccess: () => {
@@ -141,11 +147,11 @@ export function ToolbarButton({
     if (prevTool) {
       updateTool.mutate(
         {
-          uid: session.user._id,
+          uid: ownerId,
           pid: project._id,
           toolId: prevTool._id,
           toolParams: tool.params,
-          token: session.token,
+          token: effectiveToken,
         },
         {
           onSuccess: () => {
@@ -163,13 +169,13 @@ export function ToolbarButton({
     } else {
       addTool.mutate(
         {
-          uid: session.user._id,
+          uid: ownerId,
           pid: project._id,
           tool: {
             ...tool,
             position: project.tools.length,
           },
-          token: session.token,
+          token: effectiveToken,
         },
         {
           onSuccess: () => {

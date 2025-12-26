@@ -48,6 +48,73 @@ const httpsAgent = new https.Agent({
   key: key,
 });
 
+const jwt = require('jsonwebtoken');
+const SHARE_SECRET = process.env.SHARE_SECRET || 'segredo_super_secreto_mudar_em_prod';
+
+// Middleware: if a share token is present (x-share-token, Authorization bearer, or query token),
+// decode it and, if valid, set req.params.user to the token owner so existing handlers work.
+router.use((req, res, next) => {
+  try {
+    // prefer explicit header
+    let token = req.headers['x-share-token'];
+    console.log('SHARE_MW incoming headers:', req.headers && Object.keys(req.headers));
+    if (!token) {
+      const authHeader = req.headers['authorization'] || '';
+      if (authHeader.startsWith('Bearer ')) token = authHeader.split(' ')[1];
+    }
+    if (!token && req.query && (req.query.token || req.query.shareToken)) token = req.query.token || req.query.shareToken;
+
+    if (token) {
+      // Sanitize token string: remove surrounding quotes or stray whitespace
+      try {
+        if (typeof token === 'string') token = token.trim().replace(/^"|"$/g, '');
+      } catch (_) {}
+      try {
+        // Debug: log basic token shape to diagnose signature failures (length + prefix)
+        try {
+          console.log('SHARE_MW raw x-share-token length:', token ? token.length : 0);
+          console.log('SHARE_MW raw x-share-token head:', token ? token.substr(0, 16) : '');
+        } catch (logErr) {}
+
+        // First do a decode-only check. Many incoming tokens are session JWTs
+        // (signed with different secret) which would cause verify() to throw
+        // 'invalid signature'. Only attempt verify() when the decoded token
+        // indicates it's a share link.
+        let preview;
+        try {
+          preview = jwt.decode(token);
+          console.log('SHARE_MW jwt.decode preview:', preview);
+        } catch (decErr) {
+          console.log('SHARE_MW jwt.decode failed:', decErr && decErr.message);
+        }
+
+        if (preview && preview.type === 'share_link') {
+          try {
+            const decoded = jwt.verify(token, SHARE_SECRET);
+            console.log('SHARE_MW decoded token:', decoded && { owner: decoded.owner, permission: decoded.permission, projectId: decoded.projectId });
+            if (decoded && decoded.type === 'share_link' && decoded.owner) {
+              // Overwrite params.user for downstream handlers
+              req.params = req.params || {};
+              req.params.user = decoded.owner;
+              req.shareToken = token;
+              req.sharePermission = decoded.permission;
+            }
+          } catch (e) {
+            console.log('SHARE_MW verify failed for share_link token:', e && e.message);
+          }
+        } else {
+          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) {}
+        }
+      } catch (e) {
+        console.log('SHARE_MW middleware inner error:', e && e.message);
+      }
+    }
+  } catch (e) {
+    console.log('SHARE_MW middleware top-level error:', e && e.message);
+  }
+  return next();
+});
+
 const users_ms = "https://users:10001/";
 const minio_domain = process.env.MINIO_DOMAIN;
 
@@ -298,6 +365,7 @@ router.get("/:user", (req, res, next) => {
 
 // Get a specific user's project
 router.get("/:user/:project", (req, res, next) => {
+  console.log('ROUTE GET /:user/:project - params before:', req.params, 'shareTokenPresent:', !!req.shareToken, 'sharePermission:', req.sharePermission);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       const response = {
@@ -335,6 +403,7 @@ router.get("/:user/:project", (req, res, next) => {
 
 // Get a specific project's image
 router.get("/:user/:project/img/:img", async (req, res, next) => {
+  console.log('ROUTE GET /:user/:project/img/:img - params before:', req.params, 'shareTokenPresent:', !!req.shareToken);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       try {
@@ -359,6 +428,7 @@ router.get("/:user/:project/img/:img", async (req, res, next) => {
 
 // Get project images
 router.get("/:user/:project/imgs", async (req, res, next) => {
+  console.log('ROUTE GET /:user/:project/imgs - params before:', req.params, 'shareTokenPresent:', !!req.shareToken);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       try {
@@ -690,6 +760,7 @@ router.post(
 
 // Add new tool to a project
 router.post("/:user/:project/tool", (req, res, next) => {
+  console.log('ROUTE POST /:user/:project/tool - params before:', req.params, 'shareTokenPresent:', !!req.shareToken, 'body:', Object.keys(req.body));
   // Reject posts to tools that don't fullfil the requirements
   if (!req.body.procedure || !req.body.params) {
     res

@@ -242,7 +242,7 @@ export default function Project({
                         {
                           uid: effectiveUid,
                           pid: currentProjectData._id,
-                          token: session.token,
+                          token: shareToken ? (sharedPermission ? (shareToken ?? session.token) : (shareToken ?? session.token)) : session.token,
                         },
                         {
                           onSuccess: () => {

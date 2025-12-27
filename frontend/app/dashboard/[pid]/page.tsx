@@ -54,7 +54,6 @@ export default function Project({
   const processProject = useProcessProject();
   const downloadProjectResults = useDownloadProjectResults();
   const { toast } = useToast();
-  const socket = useGetSocket(session.token);
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
   const router = useRouter();
@@ -67,11 +66,17 @@ export default function Project({
   const [processingSteps, setProcessingSteps] = useState<number>(1);
   const [waitingForPreview, setWaitingForPreview] = useState<string>("");
 
-  const totalProcessingSteps =
-    ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
-  const resultsUid = shareToken ? "share" : session.user._id;
-  const resultsToken = shareToken ?? session.token;
-  const projectResults = useGetProjectResults(resultsUid, pid, resultsToken);
+  // In shared-link mode, base counts and results on the shared project/owner
+  const totalProcessingSteps = shareToken
+    ? ((sharedProject?.tools?.length ?? 0) * (sharedProject?.imgs?.length ?? 0))
+    : ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
+
+  const resultsUid = shareToken ? (sharedOwner ?? "") : session.user._id;
+  const projectResults = useGetProjectResults(resultsUid, pid, session.token);
+
+  // Socket should listen on the project owner's room when viewing via share link
+  const socketRoomId = shareToken ? (sharedOwner ?? undefined) : undefined;
+  const socket = useGetSocket(session.token, socketRoomId);
   
   useEffect(() => {
     if (!shareToken) return;
@@ -110,17 +115,13 @@ export default function Project({
       );
 
       setProcessingProgress(progress);
-      if (processingSteps >= totalProcessingSteps) {
+      if (totalProcessingSteps > 0 && processingSteps >= totalProcessingSteps) {
         setTimeout(() => {
           projectResults.refetch().then(() => {
             setProcessing(false);
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
-            const params = new URLSearchParams(searchParams.toString());
-            params.set("mode", "results");
-            params.set("view", "grid");
-            router.push(`?${params.toString()}`);
           });
         }, 2000);
       }
@@ -132,11 +133,36 @@ export default function Project({
       socket.data.on("process-update", () => {
         if (active) onProcessUpdate();
       });
+
+      socket.data.on("process-error", (msg: string) => {
+        if (!active) return;
+        try {
+          const parsed = JSON.parse(msg) as { error_code?: string; error_msg?: string };
+          toast({
+            title: "Ups! An error occurred.",
+            description: `${parsed.error_code ?? ""} ${parsed.error_msg ?? ""}`.trim() || "An error happened while processing the project.",
+            variant: "destructive",
+          });
+        } catch {
+          toast({
+            title: "Ups! An error occurred.",
+            description: "An error happened while processing the project.",
+            variant: "destructive",
+          });
+        }
+        setProcessing(false);
+        setProcessingProgress(0);
+        setProcessingSteps(1);
+        if (!isMobile) sidebar.setOpen(true);
+      });
     }
 
     return () => {
       active = false;
-      if (socket.data) socket.data.off("process-update", onProcessUpdate);
+      if (socket.data) {
+        socket.data.off("process-update", onProcessUpdate);
+        socket.data.off("process-error");
+      }
     };
   }, [
     pid,
@@ -150,6 +176,7 @@ export default function Project({
     isMobile,
     projectResults,
     searchParams,
+    toast,
   ]);
 
   if (shareToken) {

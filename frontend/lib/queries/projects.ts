@@ -37,13 +37,14 @@ export const useGetProjectImages = (
   });
 };
 
-export const useGetSocket = (token: string) => {
+export const useGetSocket = (token: string, roomId?: string) => {
   return useQuery({
-    queryKey: ["socket", token],
+    queryKey: ["socket", token, roomId],
     queryFn: () =>
       io("http://localhost:8080", {
         auth: {
           token: token,
+          roomId: roomId,
         },
       }),
     refetchOnWindowFocus: false,

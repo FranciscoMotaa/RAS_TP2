@@ -10,12 +10,19 @@ export function ModeToggle() {
   const mode = searchParams.get("mode") ?? "edit";
   const router = useRouter();
 
+  const setMode = (nextMode: "edit" | "results") => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("mode", nextMode);
+    params.set("view", view);
+    router.push(`?${params.toString()}`);
+  };
+
   return (
     <div className="flex items-center gap-0.5 p-0.5 border rounded-lg">
       <Button
         variant={mode === "edit" ? "default" : "secondary"}
         size="icon"
-        onClick={() => router.push(`?mode=edit&view=${view}`)}
+        onClick={() => setMode("edit")}
         aria-label="Edit mode"
         aria-pressed={view === "grid"}
         className="size-8"
@@ -26,7 +33,7 @@ export function ModeToggle() {
       <Button
         variant={mode === "results" ? "default" : "secondary"}
         size="icon"
-        onClick={() => router.push(`?mode=results&view=${view}`)}
+        onClick={() => setMode("results")}
         aria-label="Results mode"
         aria-pressed={view === "carousel"}
         className="size-8"

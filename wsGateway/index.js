@@ -17,7 +17,10 @@ const io = socketIo(httpServer, {
 io.on("connection", (socket) => {
     console.log("a user connected");
 
-    const token = socket.handshake.auth.token;
+    const auth = socket.handshake.auth || {};
+    const token = auth.token;
+    const roomId = auth.roomId;
+
     if (token != null) {
         jwt.verify(token, process.env.JWT_SECRET_KEY, (e, payload) => {
             if (e) {
@@ -27,6 +30,11 @@ io.on("connection", (socket) => {
 
             console.log("Connecting to room:", payload.id)
             socket.join(payload.id);
+
+            if (roomId && roomId !== payload.id) {
+                console.log("Also joining shared room:", roomId);
+                socket.join(roomId);
+            }
         });
     }
 

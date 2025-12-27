@@ -144,14 +144,18 @@ function advanced_tool_num(project) {
 // TODO process message according to type of output
 function process_msg() {
   read_msg(async (msg) => {
+    // These need to be visible in the catch block as well
+    let user_msg_id;
+    let process;
+    let timestamp;
     try {
       const msg_content = JSON.parse(msg.content.toString());
       const msg_id = msg_content.correlationId;
-      const timestamp = new Date().toISOString();
+      timestamp = new Date().toISOString();
 
-      const user_msg_id = `update-client-process-${uuidv4()}`;
+      user_msg_id = `update-client-process-${uuidv4()}`;
 
-      const process = await Process.getOne(msg_id);
+      process = await Process.getOne(msg_id);
 
       const prev_process_input_img = process.og_img_uri;
       const prev_process_output_img = process.new_img_uri;
@@ -184,9 +188,15 @@ function process_msg() {
       const type = msg_content.output.type;
       const project = await Project.getOne(process.user_id, process.project_id);
 
+      // Ensure tools are processed in a stable order even if their
+      // stored `position` values have gaps (e.g., after deletions).
+      const tools = Array.isArray(project.tools)
+        ? [...project.tools].sort((a, b) => a.position - b.position)
+        : [];
+
       const next_pos = process.cur_pos + 1;
 
-      if (/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
+      if (/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -221,7 +231,7 @@ function process_msg() {
         
         await Preview.create(preview);
 
-        if(next_pos >= project.tools.length){
+        if(next_pos >= tools.length){
           const previews = await Preview.getAll(process.user_id, process.project_id);
 
           let urls = {
@@ -254,7 +264,7 @@ function process_msg() {
         }
       }
 
-      if(/preview/.test(msg_id) && next_pos >= project.tools.length) return;
+      if(/preview/.test(msg_id) && next_pos >= tools.length) return;
 
       if (!/preview/.test(msg_id))
         send_msg_client(
@@ -263,7 +273,7 @@ function process_msg() {
           process.user_id
         );
 
-      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
+      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -298,13 +308,13 @@ function process_msg() {
         await Result.create(result);
       }
 
-      if (next_pos >= project.tools.length) return;
+      if (next_pos >= tools.length) return;
 
       const new_msg_id = /preview/.test(msg_id)
         ? `preview-${uuidv4()}`
         : `request-${uuidv4()}`;
 
-      const tool = project.tools.filter((t) => t.position == next_pos)[0];
+      const tool = tools[next_pos];
 
       const tool_name = tool.procedure;
       const params = tool.params;
@@ -332,14 +342,21 @@ function process_msg() {
         tool_name,
         params
       );
-    } catch (_) {
-      send_msg_client_error(
-        user_msg_id,
-        timestamp,
-        process.user_id,
-        "30000",
-        "An error happened while processing the project"
-      );
+    } catch (err) {
+      console.error("Error while processing project message", err);
+
+      // Safely notify client if we have enough context; otherwise just swallow
+      if (process && process.user_id) {
+        const safeMsgId = user_msg_id || `update-client-process-${uuidv4()}`;
+        const safeTimestamp = timestamp || new Date().toISOString();
+        send_msg_client_error(
+          safeMsgId,
+          safeTimestamp,
+          process.user_id,
+          "30000",
+          "An error happened while processing the project"
+        );
+      }
       return;
     }
   });

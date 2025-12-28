@@ -58,3 +58,31 @@ export function usePreview() {
   }
   return context.preview;
 }
+
+
+//CANCELAMENTO - controla o estado do projeto atual
+import { cancelProject } from "@/lib/mutations/projects";
+
+function ProjectProvider({ children }) {
+  const [status, setStatus] = useState<"idle" | "processing" | "cancelled">("idle");
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+
+  async function cancelCurrentProject() {
+    if (!currentProjectId) return;
+    await cancelProject(currentProjectId);
+    setStatus("cancelled");
+  }
+
+  return (
+    <ProjectContext.Provider
+      value={{
+        status,
+        cancelCurrentProject,
+        // resto do estado
+      }}
+    >
+      {children}
+    </ProjectContext.Provider>
+  );
+}
+

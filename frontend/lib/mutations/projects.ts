@@ -240,3 +240,16 @@ export const useClearProjectTools = (
     },
   });
 };
+
+
+//CANCELAMENTO de processamento
+import api from "../axios";
+
+export async function cancelProject(projectId: string) {
+  const { data } = await api.post(`/projects/${projectId}/cancel`);
+  return data;
+}
+
+
+
+

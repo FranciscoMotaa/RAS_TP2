@@ -27,6 +27,9 @@ import { ProjectImage } from "./project-image";
 import { useQueryClient } from "@tanstack/react-query";
 import ProjectText from "./project-text";
 
+import { useProject } from "@/providers/project-provider";
+import { Button } from "@/components/ui/button";
+
 export function ProjectImageList({
   setCurrentImageId,
   results,
@@ -136,6 +139,8 @@ export function ProjectImageList({
     };
   }, [api, jumpTo, project.imgs, setCurrentImageId]);
 
+  const projectContext = useProject();
+
   return (
     <Dialog
       open={previewOpen}
@@ -145,6 +150,18 @@ export function ProjectImageList({
       }}
     >
       <div className="size-full">
+        {projectContext.status === "processing" && (
+          <div className="flex justify-end p-2 mb-2">
+            <Button
+              variant="destructive"
+              onClick={projectContext.cancelCurrentProject}
+            >
+              Cancelar processamento
+            </Button>
+          </div>
+        )}
+
+
         {view === "grid" || project.imgs.length <= 0 ? (
           // Grid view
           <div className="size-full flex flex-col items-center">

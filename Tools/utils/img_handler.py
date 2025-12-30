@@ -13,4 +13,9 @@ class Img_Handler:
         return Image.open(img_path)
     
     def store_img(self, img: Image, img_path:str) -> None:
-        img.save(img_path)
+        # try to optimize JPEG saves (smaller files, faster IO) while preserving quality
+        ext = img_path.lower().split('.')[-1]
+        save_kwargs = {}
+        if ext in ['jpg', 'jpeg']:
+            save_kwargs = {'optimize': True, 'quality': 85}
+        img.save(img_path, **save_kwargs)

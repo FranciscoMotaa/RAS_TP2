@@ -5,6 +5,8 @@ import datetime
 import pytz
 
 from PIL import Image, ImageOps
+import numpy as np
+import threading
 
 from utils.img_handler import Img_Handler
 from utils.tool_msg import ToolMSG
@@ -20,6 +22,7 @@ class Binarization:
                                  env.RABBITMQ_USERNAME, 
                                  env.RABBITMQ_PASSWORD)
         self._counter = 0
+        self._lock = threading.Lock()
         self._codes = {
             'wrong_procedure': 1100,
             'error_processing': 1101
@@ -29,15 +32,15 @@ class Binarization:
         # load image
         img = self._img_handler.get_img(img_path)
 
-        # add binarization
-        new_img = ImageOps.grayscale(img)
-        new_img = new_img.point(lambda x: 0 if x < threshold else 255)
+        # convert to grayscale and apply threshold using numpy for speed
+        arr = np.array(img.convert('L'), dtype=np.uint8)
+        bin_arr = (arr >= threshold).astype(np.uint8) * 255
+        new_img = Image.fromarray(bin_arr, mode='L')
 
         # save image
         self._img_handler.store_img(new_img, output_path)
 
-    def binarization_callback(self, ch, method, properties, body):
-        json_str = body.decode()
+    def _process_message(self, json_str):
         info = json.loads(json_str)
 
         msg_id = info['messageId']
@@ -47,8 +50,9 @@ class Binarization:
         store_img_path = info['parameters']['outputImageURI']
         threshold = info['parameters']['threshold']
 
-        resp_msg_id = f'binarization-{self._counter}-{msg_id}'
-        self._counter += 1
+        with self._lock:
+            resp_msg_id = f'binarization-{self._counter}-{msg_id}'
+            self._counter += 1
 
         if procedure != 'binarization':
             cur_timestamp = datetime.datetime.now(pytz.utc)
@@ -73,7 +77,23 @@ class Binarization:
 
             self._tool_msg.send_msg(msg_id, resp_msg_id, cur_timestamp, 'error', processing_time, None, self._codes['error_processing'], str(e), img_path)
 
+    def binarization_callback(self, ch, method, properties, body):
+        json_str = body.decode()
+        # submit work to executor for concurrent processing; callback returns quickly
+        try:
+            self._executor.submit(self._process_message, json_str)
+        except Exception:
+            # fallback to synchronous processing if executor not ready
+            self._process_message(json_str)
+
     def exec(self, args):
+        # create a thread pool for concurrently processing incoming messages
+        from concurrent.futures import ThreadPoolExecutor
+        import os
+
+        max_workers = max(2, min(32, (os.cpu_count() or 2)))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+
         while True:
             self._tool_msg.read_msg(self.binarization_callback)
 

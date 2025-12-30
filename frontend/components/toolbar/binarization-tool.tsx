@@ -12,13 +12,15 @@ export default function BinarizationTool({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (!open) return;
+    
     const binarizationTool = project.tools.find(
       (t) => t.procedure === "binarization",
     );
     if (binarizationTool) {
       setValue((binarizationTool.params as BinarizationToolParams).threshold);
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   return (
     <ToolbarButton

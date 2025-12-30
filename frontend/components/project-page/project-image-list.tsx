@@ -10,7 +10,7 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import { useGetSocket } from "@/lib/queries/projects";
-import { useProjectInfo } from "@/providers/project-provider";
+import { useProjectInfo, usePreview } from "@/providers/project-provider";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/providers/session-provider";
 import {
@@ -54,6 +54,7 @@ export function ProjectImageList({
 
   const project = useProjectInfo();
   const session = useSession();
+  const preview = usePreview();
   const { toast } = useToast();
 
   const qc = useQueryClient();
@@ -90,6 +91,9 @@ export function ProjectImageList({
 
       socket.data.on("preview-ready", (msg) => {
         if (active) {
+          // Only show preview if this client requested it
+          if (!preview.waiting || preview.waiting === "") return;
+          
           const msg_content = JSON.parse(msg) as {
             imageUrl: string;
             textResults: string[];
@@ -99,6 +103,7 @@ export function ProjectImageList({
           setPreviewImage(url);
           setPreviewText(textResults);
           setPreviewOpen(true);
+          preview.setWaiting(""); // Clear waiting state
         }
       });
     }
@@ -110,7 +115,7 @@ export function ProjectImageList({
         socket.data.off("preview-ready");
       }
     };
-  }, [socket.data, toast]);
+  }, [socket.data, toast, preview]);
 
   useEffect(() => {
     if (view === "grid") {

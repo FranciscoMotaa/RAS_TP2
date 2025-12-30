@@ -33,6 +33,8 @@ export default function CropTool({ disabled }: { disabled: boolean }) {
   }, [currentImage]);
 
   useEffect(() => {
+    if (!open) return;
+    
     if (project.tools) {
       const cropTool = project.tools.find((t) => t.procedure === "cut");
       if (cropTool) {
@@ -42,7 +44,7 @@ export default function CropTool({ disabled }: { disabled: boolean }) {
         setBottom((cropTool.params as CropToolParams).bottom);
       }
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   function handleSet({
     l,

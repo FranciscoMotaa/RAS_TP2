@@ -103,6 +103,12 @@ export function ToolbarButton({
           token: effectiveToken,
         },
         {
+          onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
+          },
           onError: (error) => {
             toast({
               title: "Ups! An error occurred.",
@@ -156,6 +162,10 @@ export function ToolbarButton({
         },
         {
           onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
             if (preview) handlePreview();
           },
           onError: (error) => {
@@ -180,6 +190,10 @@ export function ToolbarButton({
         },
         {
           onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
             if (preview) handlePreview();
           },
           onError: (error) => {

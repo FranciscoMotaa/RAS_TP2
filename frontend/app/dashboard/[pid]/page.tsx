@@ -97,6 +97,20 @@ export default function Project({
         setSharedLoading(false);
       });
   }, [shareToken]);
+  
+  // Refetch shared project when tools change (via socket or manual trigger)
+  const refetchSharedProject = () => {
+    if (!shareToken) return;
+    api
+      .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
+      .then((resp) => {
+        setSharedProject(resp.data.project);
+      })
+      .catch((err) => {
+        console.error('Error refetching shared project:', err);
+      });
+  };
+  
   const qc = useQueryClient();
 
   useLayoutEffect(() => {
@@ -158,6 +172,17 @@ export default function Project({
         setProcessingSteps(1);
         if (!isMobile) sidebar.setOpen(true);
       });
+      
+      // Listen for project updates (when tools are added/updated/deleted)
+      socket.data.on("project-updated", () => {
+        if (active) {
+          if (shareToken) {
+            refetchSharedProject();
+          } else {
+            project.refetch();
+          }
+        }
+      });
     }
 
     return () => {
@@ -165,6 +190,7 @@ export default function Project({
       if (socket.data) {
         socket.data.off("process-update", onProcessUpdate);
         socket.data.off("process-error");
+        socket.data.off("project-updated");
       }
     };
   }, [
@@ -180,7 +206,25 @@ export default function Project({
     projectResults,
     searchParams,
     toast,
+    shareToken,
+    project,
+    refetchSharedProject,
   ]);
+  
+  // Listen for custom event from toolbar when tools are modified in shared mode
+  useEffect(() => {
+    const handleRefetchShared = () => {
+      if (shareToken) {
+        refetchSharedProject();
+      }
+    };
+    
+    window.addEventListener('refetch-shared-project', handleRefetchShared);
+    
+    return () => {
+      window.removeEventListener('refetch-shared-project', handleRefetchShared);
+    };
+  }, [shareToken, refetchSharedProject]);
 
   if (shareToken) {
     if (sharedLoading)

@@ -17,6 +17,12 @@ const projectSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, required: true }, // Maybe mudar para falso por causa de users anónimos, ou procurar alguma solução
   imgs: { type: [imgSchema], default: [] },
   tools: { type: [toolSchema], default: [] },
+  status: {
+  type: String,
+  enum: ["idle", "processing", "completed", "cancelled"],
+  default: "idle",
+},
+
 });
 
 module.exports = mongoose.model("project", projectSchema);

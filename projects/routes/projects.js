@@ -27,6 +27,8 @@ const Project = require("../controllers/project");
 const Process = require("../controllers/process");
 const Result = require("../controllers/result");
 const Preview = require("../controllers/preview");
+const { cancelProject } = require("../controllers/process");
+
 
 const {
   get_image_docker,
@@ -1147,5 +1149,7 @@ router.delete("/:user/:project/tool/:tool", (req, res, next) => {
     })
     .catch((_) => res.status(501).jsonp(`Error acquiring user's project`));
 });
+
+router.post("/:id/cancel", cancelProject);
 
 module.exports = { router, process_msg };

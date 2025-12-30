@@ -29,6 +29,8 @@ export default function ResizeTool({ disabled }: { disabled: boolean }) {
   }, [currentImage]);
 
   useEffect(() => {
+    if (!open) return;
+    
     const fetchToolDimensions = async () => {
       if (project.tools) {
         const resizeTool = project.tools.find((t) => t.procedure === "resize");
@@ -42,7 +44,7 @@ export default function ResizeTool({ disabled }: { disabled: boolean }) {
       }
     };
     fetchToolDimensions();
-  }, [project.tools, defaultHeight, defaultWidth]);
+  }, [open, defaultHeight, defaultWidth]);
 
   function handleSet({ w, h }: { w?: number; h?: number }) {
     if (w && w >= 0) {

@@ -12,6 +12,9 @@ export default function SaturationTool({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    // Only sync with project when opening the dialog, not on every project change
+    if (!open) return;
+    
     const saturationTool = project.tools.find(
       (t) => t.procedure === "saturation",
     );
@@ -20,7 +23,7 @@ export default function SaturationTool({ disabled }: { disabled: boolean }) {
         (saturationTool.params as SaturationToolParams).saturationFactor,
       );
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   return (
     <ToolbarButton

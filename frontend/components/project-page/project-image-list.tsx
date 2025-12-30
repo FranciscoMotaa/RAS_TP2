@@ -26,6 +26,7 @@ import * as ProjectTypes from "@/lib/projects";
 import { ProjectImage } from "./project-image";
 import { useQueryClient } from "@tanstack/react-query";
 import ProjectText from "./project-text";
+import { jwtDecode } from "jwt-decode";
 
 export function ProjectImageList({
   setCurrentImageId,
@@ -41,6 +42,7 @@ export function ProjectImageList({
   const searchParams = useSearchParams();
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
+  const shareToken = searchParams.get("shareToken") ?? searchParams.get("token");
 
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
@@ -55,7 +57,19 @@ export function ProjectImageList({
   const { toast } = useToast();
 
   const qc = useQueryClient();
-  const socket = useGetSocket(session.token);
+  
+  // If shareToken is present, we need to connect to the owner's room
+  let socketRoomId: string | undefined = undefined;
+  if (shareToken) {
+    try {
+      const decoded = jwtDecode<{ owner?: string }>(shareToken);
+      if (decoded.owner) socketRoomId = decoded.owner;
+    } catch (e) {
+      socketRoomId = project.user_id;
+    }
+  }
+  
+  const socket = useGetSocket(session.token, socketRoomId);
 
   useEffect(() => {
     let active = true;
@@ -158,8 +172,12 @@ export function ProjectImageList({
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 p-2 overflow-scroll overflow-x-hidden h-fit">
-                  {(mode === "results" ? results.imgs : project.imgs).map(
-                    (image, index) => (
+                  {(mode === "results"
+                    ? results.imgs
+                    : results.imgs.length > 0
+                      ? results.imgs
+                      : project.imgs
+                  ).map((image, index) => (
                       <button
                         key={image._id}
                         className="aspect-square"
@@ -221,8 +239,14 @@ export function ProjectImageList({
             <Carousel setApi={setApi}>
               <CarouselContent className="aspect-auto h-[calc(100vh-99px-0.5rem-36px)] xl:h-[calc(100vh-55px-0.5rem-36px)]">
                 {mode === "edit" &&
-                  project.imgs.length > 0 &&
-                  project.imgs.map((image) => (
+                  (results.imgs.length > 0
+                    ? results.imgs
+                    : project.imgs
+                  ).length > 0 &&
+                  (results.imgs.length > 0
+                    ? results.imgs
+                    : project.imgs
+                  ).map((image) => (
                     <CarouselItem key={image._id}>
                       <ProjectImage image={image} animation={false} />
                     </CarouselItem>

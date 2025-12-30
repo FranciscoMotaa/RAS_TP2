@@ -122,6 +122,7 @@ export function ToolbarButton({
         pid: project._id,
         imageId: currentImage?._id ?? "",
         token: effectiveToken,
+        shareToken: shareToken ?? undefined,
       },
       {
         onSuccess: () => {

@@ -5,6 +5,7 @@ import {
   getProjectImages,
   ProjectImage,
   fetchProjectResults,
+  fetchSharedProjectResults,
 } from "../projects";
 import { io } from "socket.io-client";
 
@@ -61,5 +62,13 @@ export const useGetProjectResults = (
     queryKey: ["projectResults", uid, pid, token],
     queryFn: () => fetchProjectResults(uid, pid, token),
     enabled: !!uid,
+  });
+};
+
+export const useGetSharedProjectResults = (shareToken: string | null) => {
+  return useQuery({
+    queryKey: ["sharedProjectResults", shareToken],
+    queryFn: () => fetchSharedProjectResults(shareToken as string),
+    enabled: !!shareToken,
   });
 };

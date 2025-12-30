@@ -360,6 +360,37 @@ router.get('/share/project', function (req, res, next) {
   }
 });
 
+// Fetch processed results (URLs) for a shared project using only the share token
+router.get('/share/process/url', function (req, res, next) {
+  const token = req.query.token;
+  if (!token) return res.status(400).jsonp({ error: 'Token em falta.' });
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    if (decoded.type !== 'share_link') return res.status(403).jsonp({ error: 'Token inválido.' });
+
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}/process/url`;
+
+    axiosGet(req, targetUrl, { httpsAgent: httpsAgent })
+      .then((resp) => {
+        res.status(200).send(resp.data);
+      })
+      .catch((err) => {
+        try {
+          console.error('Error fetching shared project results - message:', err && err.message);
+          if (err && err.response) {
+            console.error('Upstream status:', err.response.status);
+            console.error('Upstream data:', err.response.data);
+          }
+        } catch (_) {}
+        res.status(500).jsonp({ error: 'Erro ao obter resultados do projeto partilhado' });
+      });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') return res.status(410).jsonp({ error: 'Este link de partilha expirou.' });
+    return res.status(403).jsonp({ error: 'Link de partilha inválido.' });
+  }
+});
+
 /**
  * Get user's projects
  * @body Empty
@@ -586,6 +617,52 @@ router.post("/:user", auth.checkToken, function (req, res, next) {
 });
 
 /**
+ * Preview an image in a shared project using only the share token
+ * @query token: share token, img: image id
+ * @body Empty
+ * @returns String indication preview is being processed
+ */
+router.post('/share/preview/:img', function (req, res, next) {
+  const token = req.query.token || req.body.token;
+  if (!token) {
+    return res.status(400).jsonp({ error: 'Share token is required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    if (!decoded.owner || !decoded.projectId) {
+      return res.status(403).jsonp({ error: 'Invalid share token' });
+    }
+
+    // Verify expiry if present
+    if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
+      return res.status(410).jsonp({ error: 'Share token has expired' });
+    }
+
+    // Build internal URL
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}/preview/${req.params.img}`;
+    
+    // Forward x-share-token header for the projects service
+    const opts = {
+      httpsAgent: httpsAgent,
+      headers: {
+        'x-share-token': token,
+      }
+    };
+
+    axiosPost(req, targetUrl, req.body, opts)
+      .then((resp) => res.status(201).jsonp(resp.data))
+      .catch((err) => {
+        console.log('Error previewing shared image:', err.message);
+        res.status(500).jsonp({ error: 'Error requesting image preview' });
+      });
+  } catch (err) {
+    console.log('Share token verification failed:', err.message);
+    res.status(403).jsonp({ error: 'Invalid or expired share token' });
+  }
+});
+
+/**
  * Preview an image
  * @body Empty
  * @returns String indication preview is being processed
@@ -667,6 +744,52 @@ router.post(
       .catch((err) => res.status(500).jsonp("Error reordering tools"));
   }
 );
+
+/**
+ * Process a shared project using only the share token (no JWT required)
+ * @query token: share token
+ * @body Empty
+ * @returns String indicating process request has been created
+ */
+router.post('/share/process', function (req, res, next) {
+  const token = req.query.token || req.body.token;
+  if (!token) {
+    return res.status(400).jsonp({ error: 'Share token is required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    if (!decoded.owner || !decoded.projectId) {
+      return res.status(403).jsonp({ error: 'Invalid share token' });
+    }
+
+    // Verify expiry if present
+    if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
+      return res.status(410).jsonp({ error: 'Share token has expired' });
+    }
+
+    // Build internal URL
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}/process`;
+    
+    // Forward x-share-token header for the projects service
+    const opts = {
+      httpsAgent: httpsAgent,
+      headers: {
+        'x-share-token': token,
+      }
+    };
+
+    axiosPost(req, targetUrl, req.body, opts)
+      .then((resp) => res.status(201).jsonp(resp.data))
+      .catch((err) => {
+        console.log('Error processing shared project:', err.message);
+        res.status(500).jsonp({ error: 'Error requesting project processing' });
+      });
+  } catch (err) {
+    console.log('Share token verification failed:', err.message);
+    res.status(403).jsonp({ error: 'Invalid or expired share token' });
+  }
+});
 
 /**
  * Generate request to process a project

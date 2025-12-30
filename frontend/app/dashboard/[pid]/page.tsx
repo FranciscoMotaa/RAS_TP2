@@ -9,6 +9,7 @@ import { Toolbar } from "@/components/toolbar/toolbar";
 import {
   useGetProject,
   useGetProjectResults,
+  useGetSharedProjectResults,
   useGetSocket,
 } from "@/lib/queries/projects";
 import Loading from "@/components/loading";
@@ -71,8 +72,10 @@ export default function Project({
     ? ((sharedProject?.tools?.length ?? 0) * (sharedProject?.imgs?.length ?? 0))
     : ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
 
-  const resultsUid = shareToken ? (sharedOwner ?? "") : session.user._id;
-  const projectResults = useGetProjectResults(resultsUid, pid, session.token);
+  const resultsUid = shareToken ? "" : session.user._id;
+  const ownerResults = useGetProjectResults(resultsUid, pid, session.token);
+  const sharedResults = useGetSharedProjectResults(shareToken);
+  const projectResults = shareToken ? sharedResults : ownerResults;
 
   // Socket should listen on the project owner's room when viewing via share link
   const socketRoomId = shareToken ? (sharedOwner ?? undefined) : undefined;
@@ -276,6 +279,7 @@ export default function Project({
                           uid: effectiveUid,
                           pid: currentProjectData._id,
                           token: shareToken ? (sharedPermission ? (shareToken ?? session.token) : (shareToken ?? session.token)) : session.token,
+                          shareToken: shareToken ?? undefined,
                         },
                         {
                           onSuccess: () => {

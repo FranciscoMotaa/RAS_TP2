@@ -706,7 +706,16 @@ router.post(
           httpsAgent: httpsAgent,
         })
       .then((resp) => res.sendStatus(201))
-      .catch((err) => res.status(500).jsonp("Error adding image to project"));
+      .catch((err) => {
+        if (err.response) {
+          return res
+            .status(err.response.status)
+            .jsonp(err.response.data);
+        }
+
+        console.error("Error adding image to project:", err.message || err);
+        return res.status(500).jsonp("Error adding image to project");
+      });
   }
 );
 

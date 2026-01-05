@@ -14,7 +14,7 @@ import {
 } from "@/lib/queries/projects";
 import Loading from "@/components/loading";
 import { ProjectProvider } from "@/providers/project-provider";
-import { use, useEffect, useLayoutEffect, useState } from "react";
+import { use, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useSession } from "@/providers/session-provider";
 import {
@@ -99,7 +99,7 @@ export default function Project({
   }, [shareToken]);
   
   // Refetch shared project when tools change (via socket or manual trigger)
-  const refetchSharedProject = () => {
+  const refetchSharedProject = useCallback(() => {
     if (!shareToken) return;
     api
       .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
@@ -109,7 +109,7 @@ export default function Project({
       .catch((err) => {
         console.error('Error refetching shared project:', err);
       });
-  };
+  }, [shareToken]);
   
   const qc = useQueryClient();
 
@@ -213,10 +213,10 @@ export default function Project({
   
   // Listen for custom event from toolbar when tools are modified in shared mode
   useEffect(() => {
+    if (!shareToken) return; // Only listen if in shared mode
+    
     const handleRefetchShared = () => {
-      if (shareToken) {
-        refetchSharedProject();
-      }
+      refetchSharedProject();
     };
     
     window.addEventListener('refetch-shared-project', handleRefetchShared);

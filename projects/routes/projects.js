@@ -1,89 +1,70 @@
-var express = require("express");
-var router = express.Router();
-const axios = require("axios");
+// Add new image to a project
+router.post(
+  "/:user/:project/img",
+  upload.single("image"),
+  async (req, res, next) => {
+    console.log(
+      "[projects-ms] POST /:user/:project/img",
+      "user=",
+      req.params.user,
+      "project=",
+      req.params.project,
+      "filename=",
+      req.file && req.file.originalname
+    );
 
-const multer = require("multer");
-const FormData = require("form-data");
-
-const fs = require("fs");
-const fs_extra = require("fs-extra");
-const path = require("path");
-const mime = require("mime-types");
-
-const JSZip = require("jszip");
-
-const { v4: uuidv4 } = require('uuid');
-
-const {
-  send_msg_tool,
-  send_msg_client,
-  send_msg_client_error,
-  send_msg_client_preview,
-  send_msg_client_preview_error,
-  read_msg,
-} = require("../utils/project_msg");
-
-const Project = require("../controllers/project");
-const Process = require("../controllers/process");
-const Result = require("../controllers/result");
-const Preview = require("../controllers/preview");
-
-const {
-  get_image_docker,
-  get_image_host,
-  post_image,
-  delete_image,
-} = require("../utils/minio");
-
-const storage = multer.memoryStorage();
-var upload = multer({ storage: storage });
-
-const key = fs.readFileSync(__dirname + "/../certs/selfsigned.key");
-const cert = fs.readFileSync(__dirname + "/../certs/selfsigned.crt");
-
-const https = require("https");
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: false, // (NOTE: this will disable client verification)
-  cert: cert,
-  key: key,
-});
-
-const jwt = require('jsonwebtoken');
-const SHARE_SECRET = process.env.SHARE_SECRET || 'segredo_super_secreto_mudar_em_prod';
-
-// Middleware: if a share token is present (x-share-token, Authorization bearer, or query token),
-// decode it and, if valid, set req.params.user to the token owner so existing handlers work.
-router.use((req, res, next) => {
-  try {
-    // prefer explicit header
-    let token = req.headers['x-share-token'];
-    console.log('SHARE_MW incoming headers:', req.headers && Object.keys(req.headers));
-    if (!token) {
-      const authHeader = req.headers['authorization'] || '';
-      if (authHeader.startsWith('Bearer ')) token = authHeader.split(' ')[1];
+    if (!req.file) {
+      res.status(400).jsonp("No file found");
+      return;
     }
-    if (!token && req.query && (req.query.token || req.query.shareToken)) token = req.query.token || req.query.shareToken;
 
-    if (token) {
-      // Sanitize token string: remove surrounding quotes or stray whitespace
-      try {
-        if (typeof token === 'string') token = token.trim().replace(/^"|"$/g, '');
-      } catch (_) {}
-      try {
-        // Debug: log basic token shape to diagnose signature failures (length + prefix)
-        try {
-          console.log('SHARE_MW raw x-share-token length:', token ? token.length : 0);
-          console.log('SHARE_MW raw x-share-token head:', token ? token.substr(0, 16) : '');
-        } catch (logErr) {}
+    try {
+      const data = new FormData();
+      data.append("file", req.file.buffer, {
+        filename: req.file.originalname,
+        contentType: req.file.mimetype,
+      });
 
-        // First do a decode-only check. Many incoming tokens are session JWTs
-        // (signed with different secret) which would cause verify() to throw
-        // 'invalid signature'. Only attempt verify() when the decoded token
-        // indicates it's a share link.
-        let preview;
-        try {
-          preview = jwt.decode(token);
-          console.log('SHARE_MW jwt.decode preview:', preview);
+      const resp = await post_image(
+        req.params.user,
+        req.params.project,
+        "src",
+        data
+      );
+
+      const og_key_tmp = resp.data.data.imageKey.split("/");
+      const og_key = og_key_tmp[og_key_tmp.length - 1];
+
+      const og_uri = `./images/users/${req.params.user}/projects/${req.params.project}/src/${req.file.originalname}`;
+      const new_uri = `./images/users/${req.params.user}/projects/${req.params.project}/out/${req.file.originalname}`;
+
+      const imgDoc = {
+        og_uri: og_uri,
+        new_uri: new_uri,
+        og_img_key: og_key,
+      };
+
+      // Atomically append image while preventing duplicates by og_uri
+      const updateResult = await Project.appendImage(
+        req.params.user,
+        req.params.project,
+        imgDoc
+      );
+
+      if (!updateResult || updateResult.modifiedCount === 0) {
+        return res
+          .status(400)
+          .jsonp("This project already has an image with that name.");
+      }
+
+      console.log("[projects-ms] Image appended successfully");
+      return res.sendStatus(204);
+    } catch (e) {
+      console.error("[projects-ms] Error storing image:", e && e.message);
+      return res.status(501).jsonp(`Error storing image`);
+    }
+  }
+);
         } catch (decErr) {
           console.log('SHARE_MW jwt.decode failed:', decErr && decErr.message);
         }
@@ -714,6 +695,15 @@ router.post(
   "/:user/:project/img",
   upload.single("image"),
   async (req, res, next) => {
+    console.log(
+      "[projects-ms] POST /:user/:project/img",
+      "user=",
+      req.params.user,
+      "project=",
+      req.params.project,
+      "filename=",
+      req.file && req.file.originalname
+    );
     if (!req.file) {
       res.status(400).jsonp("No file found");
       return;
@@ -721,6 +711,10 @@ router.post(
 
     Project.getOne(req.params.user, req.params.project)
       .then(async (project) => {
+        console.log(
+          "[projects-ms] Current image count before insert:",
+          Array.isArray(project.imgs) ? project.imgs.length : 0
+        );
         const same_name_img = project.imgs.filter(
           (i) => path.basename(i.og_uri) == req.file.originalname
         );
@@ -760,7 +754,13 @@ router.post(
             });
 
             Project.update(req.params.user, req.params.project, project)
-              .then((_) => res.sendStatus(204))
+              .then((_) => {
+                console.log(
+                  "[projects-ms] Image inserted, new count:",
+                  Array.isArray(project.imgs) ? project.imgs.length : 0
+                );
+                res.sendStatus(204);
+              })
               .catch((_) =>
                 res.status(503).jsonp(`Error updating project information`)
               );

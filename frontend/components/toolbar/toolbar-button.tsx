@@ -357,13 +357,11 @@ export function ToolbarButton({
             variant="outline"
             onClick={() => handleAddTool(true)}
             className="h-6 text-xs"
-            disabled={isDefault}
           >
             Preview
           </Button>
           <Button
             onClick={() => handleAddTool()}
-            disabled={isDefault}
             className="h-6 text-xs w-full"
           >
             Save

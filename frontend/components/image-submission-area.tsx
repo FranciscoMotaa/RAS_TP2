@@ -52,8 +52,9 @@ export default function ImageSubmissionArea({
       return file;
     });
 
-    setFiles((prevFiles) => [...prevFiles, ...uniqueFiles]);
-    onDrop(uniqueFiles);
+    const updatedFiles = [...files, ...uniqueFiles];
+    setFiles(updatedFiles);
+    onDrop(updatedFiles);
   };
 
   useEffect(() => {
@@ -96,10 +97,11 @@ export default function ImageSubmissionArea({
                       </div>
                       <button
                         onClick={() => {
-                          setFiles((prevFiles) =>
-                            prevFiles.filter((_, i) => i !== index),
-                          );
-                          onDrop(files.filter((_, i) => i !== index));
+                          setFiles((prevFiles) => {
+                            const next = prevFiles.filter((_, i) => i !== index);
+                            onDrop(next);
+                            return next;
+                          });
                         }}
                         className="absolute top-0 right-0 text-foreground/50 hover:text-foreground p-1"
                       >

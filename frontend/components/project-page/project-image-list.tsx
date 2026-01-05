@@ -280,7 +280,10 @@ export function ProjectImageList({
           </div>
         )}
       </div>
-      <DialogContent className="max-w-[80%] mt-4 overflow-y-scroll overflow-x-hidden">
+      <DialogContent
+        aria-describedby={undefined}
+        className="max-w-[80%] mt-4 overflow-y-scroll overflow-x-hidden"
+      >
         <DialogHeader>
           <DialogTitle>Image Preview</DialogTitle>
         </DialogHeader>

@@ -130,7 +130,7 @@ export function ProjectImage({ image, animation = true }: ImageItemProps) {
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Are you sure?</DialogTitle>
           <DialogDescription>This action cannot be undone.</DialogDescription>

@@ -26,6 +26,15 @@ export function AddImagesDialog() {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const { toast } = useToast();
 
+  // Reset state when dialog closes
+  const handleOpenChange = (isOpen: boolean) => {
+    setOpen(isOpen);
+    if (!isOpen) {
+      setImages([]);
+      setImageFiles([]);
+    }
+  };
+
   const project = useProjectInfo();
   const { _id: pid, user_id: projectOwnerId } = project;
   const session = useSession();
@@ -42,14 +51,40 @@ export function AddImagesDialog() {
   );
 
   function onDrop(files: File[]) {
+    // ImageSubmissionArea already manages its own state and deduplication
+    // It passes us the full current list of files
+    setImageFiles(files);
     files.map(async (file) => {
       const url = await createBlobUrlFromFile(file);
-      setImages((prevImages) => [...prevImages, url]);
+      setImages((prevImages) => {
+        if (prevImages.some(img => img.includes(file.name))) {
+          return prevImages;
+        }
+        return [...prevImages, url];
+      });
     });
-    setImageFiles(files);
   }
 
   function handleAdd() {
+    if (imageFiles.length === 0) return;
+
+    const names = new Set<string>();
+    const hasDuplicateNames = imageFiles.some((file) => {
+      if (names.has(file.name)) return true;
+      names.add(file.name);
+      return false;
+    });
+
+    if (hasDuplicateNames) {
+      toast({
+        title: "Duplicate image names are not allowed.",
+        description:
+          "Please remove or rename images so that each filename is unique.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     addImages.mutate(
       {
         uid: ownerId,
@@ -63,11 +98,18 @@ export function AddImagesDialog() {
             title: "Images added successfully.",
           });
           setOpen(false);
+          setImages([]);
+          setImageFiles([]);
         },
-        onError: (error) => {
+        onError: (error: any) => {
+          const backendMessage =
+            error?.response?.data && typeof error.response.data === "string"
+              ? error.response.data
+              : undefined;
+
           toast({
             title: "Ups! An error occurred.",
-            description: error.message,
+            description: backendMessage ?? error.message,
             variant: "destructive",
           });
         },
@@ -76,7 +118,7 @@ export function AddImagesDialog() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button className="inline-flex" variant="outline">
           <Plus /> Add Images

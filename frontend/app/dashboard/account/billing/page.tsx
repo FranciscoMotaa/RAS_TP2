@@ -319,7 +319,7 @@ export default function Billing() {
                         Update
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent aria-describedby={undefined}>
                       <DialogHeader>
                         <DialogTitle>Update Card</DialogTitle>
                       </DialogHeader>

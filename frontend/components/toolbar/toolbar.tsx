@@ -75,7 +75,7 @@ export function Toolbar() {
             <Eraser />
           </Button>
         </DialogTrigger>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Clear Tools?</DialogTitle>
             <DialogDescription>

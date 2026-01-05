@@ -18,6 +18,12 @@ import { Project } from "@/lib/projects";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { api } from "@/lib/axios";
 
+interface SharedProjectData extends Project {
+  shareToken: string;
+}
+
+const SHARED_PROJECTS_KEY = 'picturas_shared_projects';
+
 export default function ProjectList() {
   const session = useSession();
   const projects = useGetProjects(session.user._id, session.token);
@@ -25,13 +31,26 @@ export default function ProjectList() {
   const router = useRouter();
   const pathname = usePathname();
   const shareToken = searchParams.get("shareToken");
-  const [sharedProject, setSharedProject] = useState<Project | null>(null);
+  const [sharedProjects, setSharedProjects] = useState<SharedProjectData[]>([]);
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [filteredProjects, setFilteredProjects] = useState<Project[]>(
     projects.data || [],
   );
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Load shared projects from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(SHARED_PROJECTS_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setSharedProjects(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setSharedProjects([]);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (projects.data) {
@@ -45,26 +64,41 @@ export default function ProjectList() {
   }, [searchQuery, projects.data]);
 
   useEffect(() => {
-    // Fetch the shared project when arriving via shareToken so it shows in the list
-    if (!shareToken) {
-      setSharedProject(null);
-      return;
-    }
+    // Fetch and save the shared project when arriving via shareToken
+    if (!shareToken) return;
 
     api
       .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
       .then((resp) => {
         if (resp.status === 200 && resp.data?.project) {
           const p = resp.data.project;
-          setSharedProject({
+          const newSharedProject: SharedProjectData = {
             _id: p._id,
             name: p.name,
             user_id: resp.data.owner ?? p.user_id,
+            shareToken: shareToken,
+          };
+
+          // Update localStorage - add if not exists, update if exists
+          setSharedProjects((prev) => {
+            const exists = prev.find((sp) => sp._id === newSharedProject._id);
+            let updated: SharedProjectData[];
+            if (exists) {
+              // Update existing
+              updated = prev.map((sp) =>
+                sp._id === newSharedProject._id ? newSharedProject : sp
+              );
+            } else {
+              // Add new
+              updated = [...prev, newSharedProject];
+            }
+            localStorage.setItem(SHARED_PROJECTS_KEY, JSON.stringify(updated));
+            return updated;
           });
         }
       })
       .catch(() => {
-        setSharedProject(null);
+        // Ignore errors
       });
   }, [shareToken]);
 
@@ -121,22 +155,23 @@ export default function ProjectList() {
       )}
       <SidebarGroupContent>
         <SidebarMenu>
-          {sharedProject && (
-            <SidebarMenuItem>
+          {/* Show all shared projects from localStorage */}
+          {sharedProjects.map((sp) => (
+            <SidebarMenuItem key={sp._id}>
               <SidebarMenuButton
                 asChild
-                isActive={pathname.includes(`/dashboard/${sharedProject._id}`)}
+                isActive={pathname.includes(`/dashboard/${sp._id}`)}
                 className="h-fit py-1 flex items-center justify-between"
               >
-                <a href={`/dashboard/${sharedProject._id}?shareToken=${encodeURIComponent(shareToken ?? "")}`}>
-                  <span>{sharedProject.name}</span>
+                <a href={`/dashboard/${sp._id}?shareToken=${encodeURIComponent(sp.shareToken)}`}>
+                  <span>{sp.name}</span>
                   <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                     Shared
                   </span>
                 </a>
               </SidebarMenuButton>
             </SidebarMenuItem>
-          )}
+          ))}
           {!projects.isLoading &&
             projects.data &&
             (filteredProjects.length > 0

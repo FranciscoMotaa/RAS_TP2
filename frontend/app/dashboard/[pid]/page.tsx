@@ -298,9 +298,16 @@ export default function Project({
         {/* Header */}
         <div className="flex flex-col xl:flex-row justify-center items-start xl:items-center xl:justify-between border-b border-sidebar-border py-2 px-2 md:px-3 xl:px-4 h-fit gap-2">
           <div className="flex items-center justify-between w-full xl:w-auto gap-2">
-            <h1 className="text-lg font-semibold truncate">
-              {currentProjectData?.name}
-            </h1>
+            <div className="flex items-center gap-2 truncate">
+              <h1 className="text-lg font-semibold truncate">
+                {currentProjectData?.name}
+              </h1>
+              {shareToken && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  Shared access
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 xl:hidden">
               <ViewToggle />
               <ModeToggle />

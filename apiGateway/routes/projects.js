@@ -36,12 +36,31 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 // Resolve effective user id for proxying to projects service.
 // If the request includes a share token in Authorization header, prefer the owner from that token.
 function resolveUserForProxy(req) {
+  // Never rewrite the user for list endpoints or project creation (no :project in params)
+  // A share link should only grant access to the specific project encoded in the token.
+  if (!req.params || !req.params.project) return req.params.user;
+
+  // Helper to validate share token: only use owner if projectId matches requested project
+  function validateAndExtractOwner(decoded) {
+    if (
+      decoded &&
+      decoded.type === 'share_link' &&
+      decoded.owner &&
+      decoded.projectId &&
+      String(decoded.projectId) === String(req.params.project)
+    ) {
+      return decoded.owner;
+    }
+    return null;
+  }
+
   // Prefer explicit share token string (header or query) and use its owner if valid
   try {
     const st = getShareTokenString(req);
     if (st) {
       const decodedSt = jwt.verify(st, SHARE_SECRET);
-      if (decodedSt && decodedSt.type === 'share_link' && decodedSt.owner) return decodedSt.owner;
+      const owner = validateAndExtractOwner(decodedSt);
+      if (owner) return owner;
     }
   } catch (_) {}
 
@@ -51,7 +70,8 @@ function resolveUserForProxy(req) {
     const token = authHeader.split(" ")[1];
     if (token) {
       const decoded = jwt.verify(token, SHARE_SECRET);
-      if (decoded && decoded.type === 'share_link' && decoded.owner) return decoded.owner;
+      const owner = validateAndExtractOwner(decoded);
+      if (owner) return owner;
     }
   } catch (_) {}
 
@@ -60,7 +80,8 @@ function resolveUserForProxy(req) {
     const qtoken = req.query && (req.query.token || req.query.shareToken);
     if (qtoken) {
       const decodedQ = jwt.verify(qtoken, SHARE_SECRET);
-      if (decodedQ && decodedQ.type === 'share_link' && decodedQ.owner) return decodedQ.owner;
+      const owner = validateAndExtractOwner(decodedQ);
+      if (owner) return owner;
     }
   } catch (_) {}
 
@@ -69,7 +90,8 @@ function resolveUserForProxy(req) {
     const xToken = req.headers['x-share-token'];
     if (xToken) {
       const decodedX = jwt.verify(xToken, SHARE_SECRET);
-      if (decodedX && decodedX.type === 'share_link' && decodedX.owner) return decodedX.owner;
+      const owner = validateAndExtractOwner(decodedX);
+      if (owner) return owner;
     }
   } catch (_) {}
 
@@ -82,7 +104,8 @@ function resolveUserForProxy(req) {
         const refererToken = refererUrl.searchParams.get('shareToken') || refererUrl.searchParams.get('token');
         if (refererToken) {
           const decodedR = jwt.verify(refererToken, SHARE_SECRET);
-          if (decodedR && decodedR.type === 'share_link' && decodedR.owner) return decodedR.owner;
+          const owner = validateAndExtractOwner(decodedR);
+          if (owner) return owner;
         }
       } catch (_) {}
     }

@@ -122,11 +122,23 @@ export function ToolbarButton({
   }
 
   function handlePreview() {
+    // If no image is selected, use the first image from the project
+    const imageId = currentImage?._id ?? (project.imgs && project.imgs.length > 0 ? project.imgs[0]._id : "");
+    
+    if (!imageId) {
+      toast({
+        title: "No images to preview",
+        description: "Add images to the project before previewing edits.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     previewEdits.mutate(
       {
         uid: ownerId,
         pid: project._id,
-        imageId: currentImage?._id ?? "",
+        imageId: imageId,
         token: effectiveToken,
         shareToken: shareToken ?? undefined,
       },
@@ -151,6 +163,15 @@ export function ToolbarButton({
   }
 
   function handleAddTool(preview?: boolean) {
+    // If params are at default: delete the tool if it exists; otherwise no-op
+    if (isDefault) {
+      if (prevTool) {
+        handleDeleteTool();
+      }
+      setOpen(false);
+      return;
+    }
+
     if (prevTool) {
       updateTool.mutate(
         {
@@ -241,6 +262,13 @@ export function ToolbarButton({
       setTimedout(false);
     }
   }, [timedout, waiting, preview]);
+
+  // If preview.waiting is cleared elsewhere (e.g., dialog close), also clear local spinner state
+  useEffect(() => {
+    if (preview.waiting === "" && waiting) {
+      setWaiting(false);
+    }
+  }, [preview.waiting, waiting]);
 
   useEffect(() => {
     let active = true;
@@ -361,7 +389,7 @@ export function ToolbarButton({
             Preview
           </Button>
           <Button
-            onClick={() => handleAddTool()}
+            onClick={() => handleAddTool(true)}
             className="h-6 text-xs w-full"
           >
             Save

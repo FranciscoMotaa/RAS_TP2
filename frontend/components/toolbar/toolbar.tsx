@@ -33,7 +33,7 @@ import { useState } from "react";
 export function Toolbar() {
   const searchParams = useSearchParams();
   const view = searchParams.get("view") ?? "grid";
-  const disabled = view === "grid";
+  const disabled = false; // Tools are now always enabled, applying to all images when no image is selected
   const project = useProjectInfo();
   const session = useSession();
 

@@ -213,7 +213,17 @@ export const useDeleteProjectTool = (
   const qc = useQueryClient();
   return useMutation({
     mutationFn: deleteProjectTool,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // Optimistically remove the tool from the project cache to avoid using stale tools on immediate Apply
+      qc.setQueryData(["project", uid, pid, token], (prev: any) => {
+        if (!prev) return prev;
+        if (!prev.tools) return prev;
+        return {
+          ...prev,
+          tools: prev.tools.filter((t: any) => t._id !== variables.toolId),
+        };
+      });
+
       qc.invalidateQueries({ queryKey: ["project", uid, pid, token] });
       qc.invalidateQueries({
         refetchType: "all",

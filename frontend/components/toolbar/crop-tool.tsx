@@ -27,10 +27,19 @@ export default function CropTool({ disabled }: { disabled: boolean }) {
         const { width, height } = await getImageDimensions(currentImage.url);
         setWidth(width);
         setHeight(height);
+      } else if (project.imgs && project.imgs.length > 0) {
+        // Use first image dimensions if no image is selected
+        const { width, height } = await getImageDimensions(project.imgs[0].url);
+        setWidth(width);
+        setHeight(height);
+      } else {
+        // Default dimensions when no images in project
+        setWidth(800);
+        setHeight(600);
       }
     };
     fetchImageDimensions();
-  }, [currentImage]);
+  }, [currentImage, project.imgs]);
 
   useEffect(() => {
     if (!open) return;

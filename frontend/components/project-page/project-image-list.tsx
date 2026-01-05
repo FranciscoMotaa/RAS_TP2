@@ -161,6 +161,8 @@ export function ProjectImageList({
       onOpenChange={() => {
         setPreviewOpen(false);
         setPreviewImage(null);
+        setPreviewText([]);
+        preview.setWaiting(""); // ensure waiting spinner clears when closing preview
       }}
     >
       <div className="size-full">
@@ -177,11 +179,12 @@ export function ProjectImageList({
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 p-2 overflow-scroll overflow-x-hidden h-fit">
-                  {(mode === "results"
-                    ? results.imgs
-                    : results.imgs.length > 0
+                  {(
+                    mode === "results"
                       ? results.imgs
-                      : project.imgs
+                      : project.tools.length > 0 && results.imgs.length > 0
+                        ? results.imgs
+                        : project.imgs
                   ).map((image, index) => (
                       <button
                         key={image._id}
@@ -244,11 +247,11 @@ export function ProjectImageList({
             <Carousel setApi={setApi}>
               <CarouselContent className="aspect-auto h-[calc(100vh-99px-0.5rem-36px)] xl:h-[calc(100vh-55px-0.5rem-36px)]">
                 {mode === "edit" &&
-                  (results.imgs.length > 0
+                  (project.tools.length > 0 && results.imgs.length > 0
                     ? results.imgs
                     : project.imgs
                   ).length > 0 &&
-                  (results.imgs.length > 0
+                  (project.tools.length > 0 && results.imgs.length > 0
                     ? results.imgs
                     : project.imgs
                   ).map((image) => (

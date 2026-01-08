@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  webpackDevMiddleware: (config) => {
+    return config;
+  },
   images: {
     remotePatterns: [
       {

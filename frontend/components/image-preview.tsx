@@ -35,6 +35,7 @@ const ImagePreview = ({
         height={500}
         className="object-contain row-start-1 col-start-1 z-20 size-full"
         alt={file.name}
+        priority
       />
       <Image
         src={blobUrl}

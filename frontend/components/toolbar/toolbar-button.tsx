@@ -187,7 +187,11 @@ export function ToolbarButton({
             if (shareToken) {
               window.dispatchEvent(new CustomEvent('refetch-shared-project'));
             }
-            if (preview) handlePreview();
+            setOpen(false);
+            // Only call handlePreview if explicitly requested (preview button clicked)
+            if (preview === true) {
+              handlePreview();
+            }
           },
           onError: (error) => {
             toast({
@@ -215,7 +219,11 @@ export function ToolbarButton({
             if (shareToken) {
               window.dispatchEvent(new CustomEvent('refetch-shared-project'));
             }
-            if (preview) handlePreview();
+            setOpen(false);
+            // Only call handlePreview if explicitly requested (preview button clicked)
+            if (preview === true) {
+              handlePreview();
+            }
           },
           onError: (error) => {
             toast({
@@ -227,7 +235,6 @@ export function ToolbarButton({
         },
       );
     }
-    setOpen(false);
   }
 
   function handleClick() {
@@ -238,13 +245,13 @@ export function ToolbarButton({
       }
       if (noParams) {
         if (prevTool) handleDeleteTool();
-        else handleAddTool(true);
+        else handleAddTool(false); // Não fazer preview ao clicar
       }
       return;
     }
     if (noParams) {
       if (prevTool) handleDeleteTool();
-      else handleAddTool(true);
+      else handleAddTool(false); // Não fazer preview ao clicar
     }
   }
 
@@ -374,7 +381,6 @@ export function ToolbarButton({
             variant={"outline"}
             className="h-6 text-xs"
             onClick={() => {
-              handleDeleteTool();
               onDefault();
             }}
             disabled={isDefault}
@@ -389,7 +395,7 @@ export function ToolbarButton({
             Preview
           </Button>
           <Button
-            onClick={() => handleAddTool(true)}
+            onClick={() => handleAddTool(false)}
             className="h-6 text-xs w-full"
           >
             Save

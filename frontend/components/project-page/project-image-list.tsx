@@ -299,6 +299,7 @@ export function ProjectImageList({
               className={`object-contain rounded-md w-full ${previewText ? "max-h-[60vh]" : "max-h-[80vh]"}`}
               alt="Preview"
               unoptimized
+              priority
             />
           )}
         </div>

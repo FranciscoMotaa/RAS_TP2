@@ -78,8 +78,9 @@ export default function Project({
   const projectResults = shareToken ? sharedResults : ownerResults;
 
   // Socket should listen on the project owner's room when viewing via share link
+  // Observer Pattern: Pass shareToken to socket for automatic subscription
   const socketRoomId = shareToken ? (sharedOwner ?? undefined) : undefined;
-  const socket = useGetSocket(session.token, socketRoomId);
+  const socket = useGetSocket(session.token, socketRoomId, shareToken ?? undefined);
   
   useEffect(() => {
     if (!shareToken) return;
@@ -132,6 +133,15 @@ export default function Project({
       );
 
       setProcessingProgress(progress);
+      
+      // Mudar para modo results na primeira atualização (quando processingSteps === 1)
+      if (processingSteps === 1) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("mode", "results");
+        params.set("view", "grid");
+        router.push(`?${params.toString()}`);
+      }
+      
       if (totalProcessingSteps > 0 && processingSteps >= totalProcessingSteps) {
         setTimeout(() => {
           projectResults.refetch().then(() => {
@@ -191,12 +201,14 @@ export default function Project({
         socket.data.off("process-update", onProcessUpdate);
         socket.data.off("process-error");
         socket.data.off("project-updated");
+        socket.data.off("project-update"); // Observer Pattern cleanup
       }
     };
   }, [
     pid,
     processingSteps,
     router,
+    searchParams,
     session.token,
     session.user._id,
     socket.data,
@@ -210,6 +222,67 @@ export default function Project({
     project,
     refetchSharedProject,
   ]);
+
+  // Observer Pattern: Listen to project updates for shared projects
+  useEffect(() => {
+    if (!socket.data || !shareToken) return;
+
+    let active = true;
+
+    const handleProjectUpdate = (data: any) => {
+      if (!active) return;
+      
+      console.log('[Observer] Received project update:', data);
+      
+      const { eventType, projectId, data: eventData } = data;
+      
+      // Only process updates for the current project
+      if (projectId !== pid) return;
+
+      switch (eventType) {
+        case 'preview-ready':
+          // Automatically handled by existing preview-ready listener
+          break;
+          
+        case 'preview-error':
+          toast({
+            title: "Preview Error",
+            description: eventData.error_msg || "An error occurred during preview",
+            variant: "destructive",
+          });
+          break;
+          
+        case 'process-update':
+          // Refetch project data when processing updates occur
+          refetchSharedProject();
+          break;
+          
+        case 'process-error':
+          toast({
+            title: "Processing Error",
+            description: eventData.error_msg || "An error occurred during processing",
+            variant: "destructive",
+          });
+          break;
+          
+        case 'observer-joined':
+          console.log('[Observer] New observer joined:', eventData.observerId);
+          break;
+          
+        default:
+          console.log('[Observer] Unknown event type:', eventType);
+      }
+    };
+
+    socket.data.on('project-update', handleProjectUpdate);
+
+    return () => {
+      active = false;
+      if (socket.data) {
+        socket.data.off('project-update', handleProjectUpdate);
+      }
+    };
+  }, [socket.data, shareToken, pid, toast, refetchSharedProject]);
   
   // Listen for custom event from toolbar when tools are modified in shared mode
   useEffect(() => {

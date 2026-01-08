@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogTrigger,
@@ -19,12 +19,14 @@ import { useProjectInfo } from "@/providers/project-provider";
 import { useSession } from "@/providers/session-provider";
 import { useToast } from "@/hooks/use-toast";
 import { useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 
 export function AddImagesDialog() {
   const [open, setOpen] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const { toast } = useToast();
+  const qc = useQueryClient();
 
   // Reset state when dialog closes
   const handleOpenChange = (isOpen: boolean) => {
@@ -54,19 +56,33 @@ export function AddImagesDialog() {
     // ImageSubmissionArea already manages its own state and deduplication
     // It passes us the full current list of files
     setImageFiles(files);
-    files.map(async (file) => {
-      const url = await createBlobUrlFromFile(file);
-      setImages((prevImages) => {
-        if (prevImages.some(img => img.includes(file.name))) {
-          return prevImages;
-        }
-        return [...prevImages, url];
-      });
-    });
   }
+
+  // Generate preview URLs whenever imageFiles changes
+  useEffect(() => {
+    const generatePreviews = async () => {
+      const urls: string[] = [];
+      for (const file of imageFiles) {
+        const url = await createBlobUrlFromFile(file);
+        urls.push(url);
+      }
+      setImages(urls);
+    };
+
+    if (imageFiles.length > 0) {
+      generatePreviews();
+    } else {
+      setImages([]);
+    }
+  }, [imageFiles]);
 
   function handleAdd() {
     if (imageFiles.length === 0) return;
+
+    // Prevent multiple submissions while one is pending
+    if (addImages.isPending) {
+      return;
+    }
 
     const names = new Set<string>();
     const hasDuplicateNames = imageFiles.some((file) => {
@@ -96,6 +112,15 @@ export function AddImagesDialog() {
         onSuccess: () => {
           toast({
             title: "Images added successfully.",
+          });
+          // Invalidate project query to refresh images in the gallery
+          // When using shareToken, the query key has empty uid (""), so match that
+          const queryUid = shareToken ? "" : ownerId;
+          qc.invalidateQueries({
+            queryKey: ["project", queryUid, pid, session.token],
+          });
+          qc.invalidateQueries({
+            queryKey: ["projectImages", queryUid, pid, session.token],
           });
           setOpen(false);
           setImages([]);

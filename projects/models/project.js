@@ -17,6 +17,14 @@ const projectSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, required: true }, // Maybe mudar para falso por causa de users anónimos, ou procurar alguma solução
   imgs: { type: [imgSchema], default: [] },
   tools: { type: [toolSchema], default: [] },
+  
+  // Campos para controle de concorrência
+  __version__: { type: Number, default: 0 },                              // Versão do documento (optimistic locking)
+  __lastModified__: { type: Date, default: Date.now },                   // Timestamp da última modificação
+  __lockTimestamp__: { type: Date, default: null },                      // Timestamp de lock pessimista (se usado)
+  __lockedBy__: { type: String, default: null },                         // ID do utilizador que tem lock
+}, { 
+  timestamps: { createdAt: '__createdAt', updatedAt: '__updatedAt' },   // Timestamps automáticos
 });
 
 module.exports = mongoose.model("project", projectSchema);

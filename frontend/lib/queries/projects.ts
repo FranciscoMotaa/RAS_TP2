@@ -38,14 +38,15 @@ export const useGetProjectImages = (
   });
 };
 
-export const useGetSocket = (token: string, roomId?: string) => {
+export const useGetSocket = (token: string, roomId?: string, shareToken?: string) => {
   return useQuery({
-    queryKey: ["socket", token, roomId],
+    queryKey: ["socket", token, roomId, shareToken],
     queryFn: () =>
       io("http://localhost:8080", {
         auth: {
           token: token,
           roomId: roomId,
+          shareToken: shareToken, // Observer Pattern: Pass shareToken for subscription
         },
       }),
     refetchOnWindowFocus: false,

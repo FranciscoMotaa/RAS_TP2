@@ -18,6 +18,7 @@ import {
 } from "@/providers/project-provider";
 import {
   useAddProjectTool,
+  useCancelPreviewProjectImage,
   useDeleteProjectTool,
   usePreviewProjectResult,
   useUpdateProjectTool,
@@ -44,7 +45,7 @@ interface ToolbarButtonProps {
 
 export function ToolbarButton({
   open = false,
-  setOpen = () => {},
+  setOpen = () => { },
   icon: Icon,
   label,
   disabled = false,
@@ -53,14 +54,14 @@ export function ToolbarButton({
   tool,
   children,
   noParams = false,
-  onDefault = () => {},
+  onDefault = () => { },
 }: ToolbarButtonProps) {
   const router = useRouter();
   const session = useSession();
   const project = useProjectInfo();
   const params = useSearchParams();
   const shareToken = params.get("shareToken") ?? params.get("token");
-  
+
   // Extract owner from share token if present; otherwise use owner from project or session
   let ownerId = session.user._id;
   if (shareToken) {
@@ -72,7 +73,7 @@ export function ToolbarButton({
       ownerId = project.user_id ?? session.user._id;
     }
   }
-  
+
   const effectiveToken = shareToken ?? session.token;
   const preview = usePreview();
   const variant =
@@ -86,6 +87,7 @@ export function ToolbarButton({
   const updateTool = useUpdateProjectTool(ownerId, project._id, effectiveToken);
   const deleteTool = useDeleteProjectTool(ownerId, project._id, effectiveToken);
   const previewEdits = usePreviewProjectResult();
+  const cancelPreview = useCancelPreviewProjectImage();
 
   const [prevTool, setPrevTool] = useState<ProjectToolResponse | undefined>(
     undefined,
@@ -195,6 +197,35 @@ export function ToolbarButton({
   }
 
   function handleClick() {
+    if (waiting) {
+      const imageId = currentImage?._id;
+      if (!imageId) return;
+
+      cancelPreview.mutate(
+        {
+          uid: ownerId,
+          pid: project._id,
+          imageId,
+          token: effectiveToken,
+        },
+        {
+          onSuccess: () => {
+            setWaiting(false);
+            preview.setWaiting("");
+          },
+          onError: (error) => {
+            toast({
+              title: "Ups! An error occurred.",
+              description: error.message,
+              variant: "destructive",
+            });
+          },
+        },
+      );
+
+      return;
+    }
+
     if (isPremium) {
       if (session.user.type === "anonymous") {
         router.push("/login");

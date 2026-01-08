@@ -5,6 +5,7 @@ import datetime
 import pytz
 from utils.img_handler import Img_Handler
 from utils.tool_msg import ToolMSG
+from utils.cancel import is_cancelled
 import utils.env as env
 
 class Border:
@@ -35,6 +36,8 @@ class Border:
         info = json.loads(json_str)
         
         msg_id = info['messageId']
+        if is_cancelled(msg_id):
+            return
         timestamp = datetime.datetime.fromisoformat(info['timestamp'])
         procedure = info['procedure']
         img_path = info['parameters']['inputImageURI']

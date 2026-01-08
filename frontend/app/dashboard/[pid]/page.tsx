@@ -20,6 +20,7 @@ import {
   useDownloadProject,
   useDownloadProjectResults,
   useProcessProject,
+  useCancelProjectProcessing,
 } from "@/lib/mutations/projects";
 import { useToast } from "@/hooks/use-toast";
 import { ProjectImage } from "@/lib/projects";
@@ -52,6 +53,7 @@ export default function Project({
   const [sharedPermission, setSharedPermission] = useState<"view" | "edit" | null>(null);
   const downloadProjectImages = useDownloadProject();
   const processProject = useProcessProject();
+  const cancelProjectProcessing = useCancelProjectProcessing();
   const downloadProjectResults = useDownloadProjectResults();
   const { toast } = useToast();
   const socket = useGetSocket(session.token);
@@ -70,18 +72,18 @@ export default function Project({
   const totalProcessingSteps =
     ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
   const projectResults = useGetProjectResults(shareToken ? "" : session.user._id, pid, session.token);
-  
+
   useEffect(() => {
     if (!shareToken) return;
     setSharedLoading(true);
     api
       .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
-        .then((resp) => {
-          setSharedProject(resp.data.project);
-          setSharedPermission(resp.data.permission);
-          setSharedOwner(resp.data.owner ?? null);
-          setSharedLoading(false);
-        })
+      .then((resp) => {
+        setSharedProject(resp.data.project);
+        setSharedPermission(resp.data.permission);
+        setSharedOwner(resp.data.owner ?? null);
+        setSharedLoading(false);
+      })
       .catch((err) => {
         setSharedError(err?.response?.data?.error || err.message || "Erro ao carregar projeto partilhado");
         setSharedLoading(false);
@@ -100,6 +102,7 @@ export default function Project({
 
   useEffect(() => {
     function onProcessUpdate() {
+      if (!processing) return;
       setProcessingSteps((prev) => prev + 1);
 
       const progress = Math.min(
@@ -123,18 +126,21 @@ export default function Project({
 
     let active = true;
 
-    if (active && socket.data) {
-      socket.data.on("process-update", () => {
-        if (active) onProcessUpdate();
-      });
+    const handler = () => {
+      if (active) onProcessUpdate();
+    };
+
+    if (socket.data) {
+      socket.data.on("process-update", handler);
     }
 
     return () => {
       active = false;
-      if (socket.data) socket.data.off("process-update", onProcessUpdate);
+      if (socket.data) socket.data.off("process-update", handler);
     };
   }, [
     pid,
+    processing,
     processingSteps,
     router,
     session.token,
@@ -192,17 +198,17 @@ export default function Project({
   // `tools` and `imgs` are arrays (avoid runtime `cannot read property 'tools' of null`).
   const currentProjectData = shareToken
     ? {
-        ...(sharedProject || {}),
-        // ensure user_id is set to owner so downstream hooks call the correct uid
-        user_id: sharedOwner ?? sharedProject?.user_id ?? null,
-        tools: sharedProject?.tools ?? [],
-        imgs: sharedProject?.imgs ?? [],
-      }
+      ...(sharedProject || {}),
+      // ensure user_id is set to owner so downstream hooks call the correct uid
+      user_id: sharedOwner ?? sharedProject?.user_id ?? null,
+      tools: sharedProject?.tools ?? [],
+      imgs: sharedProject?.imgs ?? [],
+    }
     : {
-        ...(project.data || {}),
-        tools: project.data?.tools ?? [],
-        imgs: project.data?.imgs ?? [],
-      };
+      ...(project.data || {}),
+      tools: project.data?.tools ?? [],
+      imgs: project.data?.imgs ?? [],
+    };
 
   const currentProjectResults = shareToken
     ? { imgs: currentProjectData.imgs ?? [], texts: [] }
@@ -329,6 +335,39 @@ export default function Project({
               <LoaderCircle className="size-[1em] animate-spin" />
             </div>
             <Progress value={processingProgress} className="w-96" />
+            <Button
+              variant="outline"
+              onClick={() => {
+                const effectiveUid = shareToken
+                  ? (sharedOwner ?? session.user._id)
+                  : session.user._id;
+
+                cancelProjectProcessing.mutate(
+                  {
+                    uid: effectiveUid,
+                    pid: currentProjectData._id,
+                    token: shareToken ?? session.token,
+                  },
+                  {
+                    onSuccess: () => {
+                      setProcessing(false);
+                      if (!isMobile) sidebar.setOpen(true);
+                      setProcessingProgress(0);
+                      setProcessingSteps(1);
+                      toast({ title: "Processing cancelled." });
+                    },
+                    onError: (error) =>
+                      toast({
+                        title: "Ups! An error occurred.",
+                        description: error.message,
+                        variant: "destructive",
+                      }),
+                  },
+                );
+              }}
+            >
+              Cancel
+            </Button>
           </Card>
         </div>
       </Transition>

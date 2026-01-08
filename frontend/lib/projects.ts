@@ -570,3 +570,76 @@ export const processProject = async ({
   if (response.status !== 201 || !response.data)
     throw new Error("Failed to request project processing");
 };
+
+export const cancelProjectProcessing = async ({
+  uid,
+  pid,
+  token,
+}: {
+  uid: string;
+  pid: string;
+  token: string;
+}) => {
+  const response = await api.post(
+    `/projects/${uid}/${pid}/process/cancel`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (response.status !== 204)
+    throw new Error("Failed to cancel project processing");
+};
+
+export const cancelProjectImageProcessing = async ({
+  uid,
+  pid,
+  imageId,
+  token,
+}: {
+  uid: string;
+  pid: string;
+  imageId: string;
+  token: string;
+}) => {
+  const response = await api.post(
+    `/projects/${uid}/${pid}/process/img/${imageId}/cancel`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (response.status !== 204)
+    throw new Error("Failed to cancel image processing");
+};
+
+export const cancelPreviewProjectImage = async ({
+  uid,
+  pid,
+  imageId,
+  token,
+}: {
+  uid: string;
+  pid: string;
+  imageId: string;
+  token: string;
+}) => {
+  const response = await api.post(
+    `/projects/${uid}/${pid}/preview/${imageId}/cancel`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (response.status !== 204)
+    throw new Error("Failed to cancel preview");
+};

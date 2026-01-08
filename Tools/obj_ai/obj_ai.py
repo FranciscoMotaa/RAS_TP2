@@ -9,6 +9,7 @@ from ultralytics import YOLO
 
 from utils.img_handler import Img_Handler
 from utils.tool_msg import ToolMSG
+from utils.cancel import is_cancelled
 import utils.env as env
 
 class Object_ai:
@@ -79,6 +80,9 @@ class Object_ai:
         json_str = body.decode()
         info = json.loads(json_str)
         msg_id = info['messageId']
+
+        if is_cancelled(msg_id):
+            return
         
         timestamp = datetime.datetime.fromisoformat(info['timestamp'])
         

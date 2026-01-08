@@ -8,6 +8,7 @@ import utils.env as env
 
 from utils.img_handler import Img_Handler
 from utils.tool_msg import ToolMSG
+from utils.cancel import is_cancelled
 
 class Background_Remove_AI:
     def __init__(self):
@@ -34,6 +35,10 @@ class Background_Remove_AI:
         info = json.loads(json_str)
         
         msg_id = info['messageId']
+
+        # Cooperative cancellation: if this message was cancelled, stop immediately.
+        if is_cancelled(msg_id):
+            return
         timestamp = datetime.datetime.fromisoformat(info['timestamp'])
         procedure = info['procedure']
         img_path = info['parameters']['inputImageURI']

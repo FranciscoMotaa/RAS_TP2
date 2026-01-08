@@ -3,6 +3,9 @@ import {
   addProject,
   addProjectImages,
   addProjectTool,
+  cancelPreviewProjectImage,
+  cancelProjectImageProcessing,
+  cancelProjectProcessing,
   clearProjectTools,
   deleteProject,
   deleteProjectImages,
@@ -158,6 +161,24 @@ export const useDownloadProjectResults = () => {
 export const useProcessProject = () => {
   return useMutation({
     mutationFn: processProject,
+  });
+};
+
+export const useCancelProjectProcessing = () => {
+  return useMutation({
+    mutationFn: cancelProjectProcessing,
+  });
+};
+
+export const useCancelProjectImageProcessing = () => {
+  return useMutation({
+    mutationFn: cancelProjectImageProcessing,
+  });
+};
+
+export const useCancelPreviewProjectImage = () => {
+  return useMutation({
+    mutationFn: cancelPreviewProjectImage,
   });
 };
 

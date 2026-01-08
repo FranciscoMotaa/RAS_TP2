@@ -68,13 +68,13 @@ router.use((req, res, next) => {
       // Sanitize token string: remove surrounding quotes or stray whitespace
       try {
         if (typeof token === 'string') token = token.trim().replace(/^"|"$/g, '');
-      } catch (_) {}
+      } catch (_) { }
       try {
         // Debug: log basic token shape to diagnose signature failures (length + prefix)
         try {
           console.log('SHARE_MW raw x-share-token length:', token ? token.length : 0);
           console.log('SHARE_MW raw x-share-token head:', token ? token.substr(0, 16) : '');
-        } catch (logErr) {}
+        } catch (logErr) { }
 
         // First do a decode-only check. Many incoming tokens are session JWTs
         // (signed with different secret) which would cause verify() to throw
@@ -103,7 +103,7 @@ router.use((req, res, next) => {
             console.log('SHARE_MW verify failed for share_link token:', e && e.message);
           }
         } else {
-          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) {}
+          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) { }
         }
       } catch (e) {
         console.log('SHARE_MW middleware inner error:', e && e.message);
@@ -144,6 +144,7 @@ function advanced_tool_num(project) {
 // TODO process message according to type of output
 function process_msg() {
   read_msg(async (msg) => {
+    let process;
     try {
       const msg_content = JSON.parse(msg.content.toString());
       const msg_id = msg_content.correlationId;
@@ -151,23 +152,27 @@ function process_msg() {
 
       const user_msg_id = `update-client-process-${uuidv4()}`;
 
-      const process = await Process.getOne(msg_id);
+      process = await Process.getOne(msg_id);
+
+      // If there's no matching process entry, this is likely a stale response
+      // (e.g., user cancelled the processing). Ignore it.
+      if (!process) return;
 
       const prev_process_input_img = process.og_img_uri;
       const prev_process_output_img = process.new_img_uri;
-      
+
       // Get current process, delete it and create it's sucessor if possible
       const og_img_uri = process.og_img_uri;
       const img_id = process.img_id;
-      
+
       await Process.delete(process.user_id, process.project_id, process._id);
-      
+
       if (msg_content.status === "error") {
         console.log(JSON.stringify(msg_content));
         if (/preview/.test(msg_id)) {
           send_msg_client_preview_error(`update-client-preview-${uuidv4()}`, timestamp, process.user_id, msg_content.error.code, msg_content.error.msg)
         }
-        
+
         else {
           send_msg_client_error(
             user_msg_id,
@@ -179,7 +184,7 @@ function process_msg() {
         }
         return;
       }
-      
+
       const output_file_uri = msg_content.output.imageURI;
       const type = msg_content.output.type;
       const project = await Project.getOne(process.user_id, process.project_id);
@@ -209,7 +214,7 @@ function process_msg() {
         const og_key_tmp = resp.data.data.imageKey.split("/");
         const og_key = og_key_tmp[og_key_tmp.length - 1];
 
-        
+
         const preview = {
           type: type,
           file_name: file_name,
@@ -218,10 +223,10 @@ function process_msg() {
           project_id: process.project_id,
           user_id: process.user_id,
         };
-        
+
         await Preview.create(preview);
 
-        if(next_pos >= project.tools.length){
+        if (next_pos >= project.tools.length) {
           const previews = await Preview.getAll(process.user_id, process.project_id);
 
           let urls = {
@@ -229,7 +234,7 @@ function process_msg() {
             'textResults': []
           };
 
-          for(let p of previews){
+          for (let p of previews) {
             const url_resp = await get_image_host(
               process.user_id,
               process.project_id,
@@ -239,11 +244,11 @@ function process_msg() {
 
             const url = url_resp.data.url;
 
-            if(p.type != "text") urls.imageUrl = url;
+            if (p.type != "text") urls.imageUrl = url;
 
             else urls.textResults.push(url);
           }
-          
+
           send_msg_client_preview(
             `update-client-preview-${uuidv4()}`,
             timestamp,
@@ -254,7 +259,7 @@ function process_msg() {
         }
       }
 
-      if(/preview/.test(msg_id) && next_pos >= project.tools.length) return;
+      if (/preview/.test(msg_id) && next_pos >= project.tools.length) return;
 
       if (!/preview/.test(msg_id))
         send_msg_client(
@@ -332,18 +337,112 @@ function process_msg() {
         tool_name,
         params
       );
-    } catch (_) {
-      send_msg_client_error(
-        user_msg_id,
-        timestamp,
-        process.user_id,
-        "30000",
-        "An error happened while processing the project"
-      );
+    } catch (err) {
+      try {
+        const user_msg_id = `update-client-process-${uuidv4()}`;
+        const timestamp = new Date().toISOString();
+        if (process && process.user_id)
+          send_msg_client_error(
+            user_msg_id,
+            timestamp,
+            process.user_id,
+            "30000",
+            "An error happened while processing the project"
+          );
+      } catch (_) {
+        // best-effort error reporting
+      }
       return;
     }
   });
 }
+
+// Cooperative cancellation: projects service writes a cancel marker file into the shared
+// images volume. Tool workers check for this marker before doing heavy work.
+const CANCEL_DIR = process.env.CANCEL_DIR || "/app/images/cancel";
+
+function ensureCancelDir() {
+  try {
+    fs.mkdirSync(CANCEL_DIR, { recursive: true });
+  } catch (_) {
+    // best-effort
+  }
+}
+
+function markCancelled(msgIds) {
+  ensureCancelDir();
+  for (const msgId of msgIds || []) {
+    try {
+      if (!msgId) continue;
+      fs.writeFileSync(path.join(CANCEL_DIR, String(msgId)), "1");
+    } catch (_) {
+      // best-effort
+    }
+  }
+}
+
+// Cancel processing of a specific project (best-effort).
+// This stops the orchestration by deleting the current process entries; any in-flight tool result
+// messages will be ignored when they arrive.
+router.post("/:user/:project/process/cancel", async (req, res) => {
+  // Disallow cancelling when accessed through a view-only share link
+  if (req.shareToken && req.sharePermission === "view") {
+    return res.status(403).jsonp("Insufficient permission");
+  }
+
+  try {
+    const msgIds = await Process.getMsgIdsByProjectAndPrefix(
+      req.params.user,
+      req.params.project,
+      "request-"
+    );
+    markCancelled(msgIds);
+    await Process.deleteProjectByMsgPrefix(req.params.user, req.params.project, "request-");
+    return res.sendStatus(204);
+  } catch (_) {
+    return res.status(500).jsonp("Error cancelling project processing");
+  }
+});
+
+// Cancel preview processing for a specific image (best-effort).
+router.post("/:user/:project/preview/:img/cancel", async (req, res) => {
+  if (req.shareToken && req.sharePermission === "view") {
+    return res.status(403).jsonp("Insufficient permission");
+  }
+
+  try {
+    const msgIds = await Process.getMsgIdsForPreviewImage(
+      req.params.user,
+      req.params.project,
+      req.params.img
+    );
+    markCancelled(msgIds);
+    await Process.deletePreviewForImage(req.params.user, req.params.project, req.params.img);
+    return res.sendStatus(204);
+  } catch (_) {
+    return res.status(500).jsonp("Error cancelling preview processing");
+  }
+});
+
+// Cancel processing (non-preview) for a specific image in a project (best-effort).
+router.post("/:user/:project/process/img/:img/cancel", async (req, res) => {
+  if (req.shareToken && req.sharePermission === "view") {
+    return res.status(403).jsonp("Insufficient permission");
+  }
+
+  try {
+    const msgIds = await Process.getMsgIdsForProcessingImage(
+      req.params.user,
+      req.params.project,
+      req.params.img
+    );
+    markCancelled(msgIds);
+    await Process.deleteProcessingForImage(req.params.user, req.params.project, req.params.img);
+    return res.sendStatus(204);
+  } catch (_) {
+    return res.status(500).jsonp("Error cancelling image processing");
+  }
+});
 
 // Get list of all projects from a user
 router.get("/:user", (req, res, next) => {
@@ -357,7 +456,6 @@ router.get("/:user", (req, res, next) => {
           name: p.name,
         });
       }
-
       res.status(200).jsonp(ans);
     })
     .catch((_) => res.status(500).jsonp("Error acquiring user's projects"));
@@ -542,9 +640,9 @@ router.get("/:user/:project/process/url", (req, res, next) => {
         );
         const url = resp.data.url;
 
-        if(r.type == 'text') ans.texts.push({ og_img_id : r.img_id, name: r.file_name, url: url })
+        if (r.type == 'text') ans.texts.push({ og_img_id: r.img_id, name: r.file_name, url: url })
 
-        else ans.imgs.push({ og_img_id : r.img_id, name: r.file_name, url: url })
+        else ans.imgs.push({ og_img_id: r.img_id, name: r.file_name, url: url })
       }
 
       res.status(200).jsonp(ans);
@@ -600,7 +698,7 @@ router.post("/:user/:project/preview/:img", (req, res, next) => {
         req.params.project
       );
 
-      for(let p of prev_preview){
+      for (let p of prev_preview) {
         await delete_image(
           req.params.user,
           req.params.project,

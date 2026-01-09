@@ -902,9 +902,13 @@ router.post(
     const proxyUser = resolveUserForProxy(req);
     axiosPost(req, projectsURL + `${proxyUser}/${req.params.project}/process`, req.body, { httpsAgent: httpsAgent })
       .then((resp) => res.status(201).jsonp(resp.data))
-      .catch((err) =>
-        res.status(500).jsonp("Error requesting project processing")
-      );
+      .catch((err) => {
+        if (err.response) {
+          return res.status(err.response.status).jsonp(err.response.data);
+        }
+        console.error("Error requesting project processing:", err.message || err);
+        res.status(500).jsonp("Error requesting project processing");
+      });
   }
 );
 

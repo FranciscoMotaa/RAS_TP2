@@ -459,6 +459,31 @@ export const previewProjectImage = async ({
     throw new Error("Failed to request preview");
 };
 
+export const cancelPreviewProjectImage = async ({
+  uid,
+  pid,
+  imageId,
+  token,
+}: {
+  uid: string;
+  pid: string;
+  imageId: string;
+  token: string;
+}) => {
+  const response = await api.post(
+    `/projects/${uid}/${pid}/preview/${imageId}/cancel`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (response.status !== 204)
+    throw new Error("Failed to cancel image preview");
+};
+
 export const addProjectTool = async ({
   uid,
   pid,

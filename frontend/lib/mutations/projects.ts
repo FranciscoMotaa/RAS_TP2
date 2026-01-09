@@ -16,6 +16,7 @@ import {
   shareProject,
   updateProjectTool,
   previewProjectImage,
+  cancelPreviewProjectImage,
 } from "../projects";
 import { createBlobUrlFromFile, downloadBlob } from "../utils";
 
@@ -188,6 +189,12 @@ export const useAddProjectTool = (uid: string, pid: string, token: string) => {
 export const usePreviewProjectResult = () => {
   return useMutation({
     mutationFn: previewProjectImage,
+  });
+};
+
+export const useCancelPreviewProjectImage = () => {
+  return useMutation({
+    mutationFn: cancelPreviewProjectImage,
   });
 };
 

@@ -435,13 +435,29 @@ export default function Project({
                             // Processing started, UI already updated above
                           },
                           onError: (error: any) => {
-                            // Clear cancel button on error
+                            // Clear cancel button and processing state on error
                             setShowCancelButton(false);
+                            setProcessing(false);
+                            setProcessingProgress(0);
+                            setProcessingSteps(1);
 
                             if (error?.message !== 'canceled' && error?.name !== 'CanceledError') {
+                              // Check if error is about daily operations limit
+                              const errorMsg = typeof error.message === 'string' 
+                                ? error.message 
+                                : JSON.stringify(error.message || error);
+                              
+                              let title = "Processing Error";
+                              let description = errorMsg;
+                              
+                              if (errorMsg.includes('daily_operations') || errorMsg.includes('No more')) {
+                                title = "Daily Limit Reached";
+                                description = "You have reached the daily limit for AI tool processing. Upgrade to Premium for unlimited processing or try again tomorrow.";
+                              }
+                              
                               toast({
-                                title: "Ups! An error occurred.",
-                                description: error.message,
+                                title,
+                                description,
                                 variant: "destructive",
                               });
                             }

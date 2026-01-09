@@ -117,6 +117,15 @@ export default function Project({
   
   const qc = useQueryClient();
 
+  // Force results mode when accessing with read-only permission
+  useLayoutEffect(() => {
+    if (sharedPermission === "view" && mode === "edit") {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("mode", "results");
+      router.replace(`?${params.toString()}`);
+    }
+  }, [sharedPermission, mode, searchParams, router]);
+
   useLayoutEffect(() => {
     if (
       !["edit", "results"].includes(mode) ||
@@ -397,7 +406,7 @@ export default function Project({
             </div>
             <div className="flex items-center gap-2 xl:hidden">
               <ViewToggle />
-              <ModeToggle />
+              <ModeToggle sharedPermission={sharedPermission} />
             </div>
           </div>
           <div className="flex items-center justify-between w-full xl:w-auto gap-2">
@@ -508,7 +517,7 @@ export default function Project({
               </Button>
               <div className="hidden xl:flex items-center gap-2">
                 <ViewToggle />
-                <ModeToggle />
+                <ModeToggle sharedPermission={sharedPermission} />
                 <ShareModal />
               </div>
             </div>

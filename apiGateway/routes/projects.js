@@ -819,6 +819,11 @@ router.post('/share/process', function (req, res, next) {
       return res.status(403).jsonp({ error: 'Invalid share token' });
     }
 
+    // Check if permission is 'edit' (read-only links cannot process)
+    if (decoded.permission !== 'edit') {
+      return res.status(403).jsonp({ error: 'Insufficient permissions to process this project' });
+    }
+
     // Verify expiry if present
     if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
       return res.status(410).jsonp({ error: 'Share token has expired' });
@@ -860,6 +865,11 @@ router.delete('/share/process', function (req, res, next) {
     const decoded = jwt.verify(token, SHARE_SECRET);
     if (!decoded.owner || !decoded.projectId) {
       return res.status(403).jsonp({ error: 'Invalid share token' });
+    }
+
+    // Check if permission is 'edit' (read-only links cannot cancel processing)
+    if (decoded.permission !== 'edit') {
+      return res.status(403).jsonp({ error: 'Insufficient permissions to cancel processing' });
     }
 
     // Verify expiry if present

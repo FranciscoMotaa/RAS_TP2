@@ -1,14 +1,21 @@
 "use client";
 
-import { Pencil, Eye } from "lucide-react";
+import { Pencil, Eye, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export function ModeToggle() {
+interface ModeToggleProps {
+  sharedPermission?: "view" | "edit" | null;
+}
+
+export function ModeToggle({ sharedPermission }: ModeToggleProps) {
   const searchParams = useSearchParams();
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
   const router = useRouter();
+
+  // Check if edit mode is disabled (read-only access)
+  const isEditDisabled = sharedPermission === "view";
 
   const setMode = (nextMode: "edit" | "results") => {
     const params = new URLSearchParams(searchParams.toString());
@@ -22,13 +29,18 @@ export function ModeToggle() {
       <Button
         variant={mode === "edit" ? "default" : "secondary"}
         size="icon"
-        onClick={() => setMode("edit")}
+        onClick={() => {
+          if (!isEditDisabled) {
+            setMode("edit");
+          }
+        }}
+        disabled={isEditDisabled}
         aria-label="Edit mode"
         aria-pressed={view === "grid"}
         className="size-8"
-        title="Edit mode"
+        title={isEditDisabled ? "Modo edição bloqueado (acesso somente leitura)" : "Edit mode"}
       >
-        <Pencil className="h-4 w-4" />
+        {isEditDisabled ? <Lock className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
       </Button>
       <Button
         variant={mode === "results" ? "default" : "secondary"}

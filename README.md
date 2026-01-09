@@ -65,41 +65,105 @@ PictuRAS is built using a microservices architecture with the following componen
 - **Load Balancer**: Nginx for request routing
 - **Monitoring**: ELK stack for logging and monitoring (optional)
 
-## 🛠️ Quick Start
+## 🛠️ Como Rodar o Projeto
 
-### Prerequisites
+### Pré-requisitos
 
-- Docker and Docker Compose
-- At least 8GB RAM (recommended for AI tools)
-- Modern web browser
+- Docker e Docker Compose instalados
+- Pelo menos 8GB RAM (recomendado para ferramentas AI)
+- Navegador web moderno
 
-### Installation
+### Instalação e Execução
 
-1. **Clone the repository**
+1. **Clone o repositório**
 
    ```bash
    git clone <repository-url>
    cd picturas
    ```
 
-2. **Start the application**
+2. **Inicie todos os serviços**
 
    ```bash
-   docker compose up
+   docker-compose down -v  # Limpa containers antigos (se existirem)
+   docker-compose up -d --build
    ```
 
-3. **Access the application**
-   - Frontend: http://localhost:8080
-   - API Gateway: http://localhost:8000
-   - MinIO Console: http://localhost:9090 (admin/admin123)
-   - RabbitMQ Management: http://localhost:15672 (user/password)
+   Este comando irá:
+   - Construir todas as imagens Docker
+   - Iniciar ~27 containers (frontend, backend services, databases, AI tools)
+   - Configurar a rede e volumes necessários
+   
+   ⏱️ **Nota**: O primeiro build pode demorar 5-10 minutos dependendo da sua conexão e hardware.
 
-### First Steps
+3. **Verifique o status dos containers**
 
-1. Open your browser and navigate to http://localhost:8080
-2. Create a new account or use the anonymous mode
-3. Start a new project and upload your first image
-4. Explore the various editing tools and AI features
+   ```bash
+   docker-compose ps
+   ```
+
+   Todos os serviços devem estar com status `Up` ou `Up (healthy)`.
+
+4. **Acesse a aplicação**
+   - **Frontend Principal**: http://localhost:8080 (via Nginx)
+   - **Frontend Direto**: http://localhost:3000
+   - **API Gateway**: http://localhost:8000
+   - **MinIO Console**: http://localhost:9090 (admin/admin123)
+   - **RabbitMQ Management**: http://localhost:15672 (user/password)
+
+### Comandos Úteis
+
+```bash
+# Parar todos os containers
+docker-compose stop
+
+# Parar e remover containers
+docker-compose down
+
+# Parar e remover containers + volumes (limpa banco de dados)
+docker-compose down -v
+
+# Ver logs de todos os serviços
+docker-compose logs -f
+
+# Ver logs de um serviço específico
+docker-compose logs -f frontend
+docker-compose logs -f api_gateway
+
+# Rebuild de um serviço específico
+docker-compose up -d --build frontend
+
+# Listar containers em execução
+docker-compose ps
+```
+
+### Primeiros Passos
+
+1. Abra o navegador e acesse http://localhost:8080
+2. Crie uma nova conta ou use o modo anónimo
+3. Crie um novo projeto e faça upload da primeira imagem
+4. Explore as várias ferramentas de edição e funcionalidades AI
+5. Experimente partilhar projetos com permissões de leitura ou edição
+
+### Resolução de Problemas
+
+**Containers não iniciam:**
+```bash
+docker-compose down -v
+docker-compose up -d --build
+```
+
+**Porta já em uso:**
+- Verifique se já tem serviços rodando nas portas 3000, 8000, 8080, 9000, etc.
+- Altere as portas no `docker-compose.yaml` se necessário
+
+**Build do frontend demora muito:**
+- É normal no primeiro build (Next.js compila tudo)
+- Builds subsequentes serão mais rápidos com cache
+
+**Erro de memória:**
+- Certifique-se de ter pelo menos 8GB RAM disponível
+- Feche outras aplicações pesadas
 
 ## 📁 Project Structure
 

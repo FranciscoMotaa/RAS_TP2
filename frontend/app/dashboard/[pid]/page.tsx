@@ -136,6 +136,7 @@ export default function Project({
       );
 
       setProcessingProgress(progress);
+      
       if (totalProcessingSteps > 0 && processingSteps >= totalProcessingSteps) {
         setShowCancelButton(false);
         
@@ -145,6 +146,13 @@ export default function Project({
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
+            
+            // Redirect to results view after processing completes
+            const params = new URLSearchParams();
+            params.set("mode", "results");
+            params.set("view", "grid");
+            if (shareToken) params.set("shareToken", shareToken);
+            router.push(`${path}?${params.toString()}`);
           });
         }, 2000);
       }
@@ -506,12 +514,16 @@ export default function Project({
         leaveTo="opacity-0"
       >
         <div className="absolute top-0 left-0 h-screen w-screen bg-black/70 z-50 flex justify-center items-center">
-          <Card className="p-4 flex flex-col justify-center items-center gap-4">
+          <Card className="p-6 flex flex-col justify-center items-center gap-4 max-w-md">
             <div className="flex gap-2 items-center text-lg font-semibold">
               <h1>Processing</h1>
               <LoaderCircle className="size-[1em] animate-spin" />
             </div>
             <Progress value={processingProgress} className="w-96" />
+            <div className="flex w-full justify-between text-sm text-gray-600">
+              <span>{processingProgress}%</span>
+              <span>{processingSteps} / {totalProcessingSteps}</span>
+            </div>
             {showCancelButton && (
               <Button
                 variant="destructive"

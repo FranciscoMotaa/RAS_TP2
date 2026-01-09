@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, LoaderCircle, OctagonAlert, Play } from "lucide-react";
+import { Download, LoaderCircle, OctagonAlert, Play, XCircle } from "lucide-react";
 import { ProjectImageList } from "@/components/project-page/project-image-list";
 import { ViewToggle } from "@/components/project-page/view-toggle";
 import { AddImagesDialog } from "@/components/project-page/add-images-dialog";
@@ -14,13 +14,14 @@ import {
 } from "@/lib/queries/projects";
 import Loading from "@/components/loading";
 import { ProjectProvider } from "@/providers/project-provider";
-import { use, useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useSession } from "@/providers/session-provider";
 import {
   useDownloadProject,
   useDownloadProjectResults,
   useProcessProject,
+  useCancelProjectProcessing,
 } from "@/lib/mutations/projects";
 import { useToast } from "@/hooks/use-toast";
 import { ProjectImage } from "@/lib/projects";
@@ -53,6 +54,7 @@ export default function Project({
   const [sharedPermission, setSharedPermission] = useState<"view" | "edit" | null>(null);
   const downloadProjectImages = useDownloadProject();
   const processProject = useProcessProject();
+  const cancelProcessing = useCancelProjectProcessing();
   const downloadProjectResults = useDownloadProjectResults();
   const { toast } = useToast();
   const view = searchParams.get("view") ?? "grid";
@@ -66,6 +68,9 @@ export default function Project({
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [processingSteps, setProcessingSteps] = useState<number>(1);
   const [waitingForPreview, setWaitingForPreview] = useState<string>("");
+  const [showCancelButton, setShowCancelButton] = useState<boolean>(false);
+  const [savedProjectState, setSavedProjectState] = useState<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // In shared-link mode, base counts and results on the shared project/owner
   const totalProcessingSteps = shareToken
@@ -133,12 +138,15 @@ export default function Project({
 
       setProcessingProgress(progress);
       if (totalProcessingSteps > 0 && processingSteps >= totalProcessingSteps) {
+        setShowCancelButton(false);
+        
         setTimeout(() => {
           projectResults.refetch().then(() => {
             setProcessing(false);
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
+            setSavedProjectState(null);
           });
         }, 2000);
       }
@@ -153,6 +161,10 @@ export default function Project({
 
       socket.data.on("process-error", (msg: string) => {
         if (!active) return;
+        
+        // Clear cancel button on error
+        setShowCancelButton(false);
+        
         try {
           const parsed = JSON.parse(msg) as { error_code?: string; error_msg?: string };
           toast({
@@ -170,6 +182,7 @@ export default function Project({
         setProcessing(false);
         setProcessingProgress(0);
         setProcessingSteps(1);
+        setSavedProjectState(null);
         if (!isMobile) sidebar.setOpen(true);
       });
       
@@ -225,6 +238,85 @@ export default function Project({
       window.removeEventListener('refetch-shared-project', handleRefetchShared);
     };
   }, [shareToken, refetchSharedProject]);
+  
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const handleCancelProcessing = useCallback(async () => {
+    // Abort the HTTP request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Reset UI state
+    setShowCancelButton(false);
+    setProcessing(false);
+    setProcessingProgress(0);
+    setProcessingSteps(1);
+
+    const effectiveUid = shareToken ? (sharedOwner ?? session.user._id) : session.user._id;
+
+    // Call backend to cancel processing
+    try {
+      await cancelProcessing.mutateAsync({
+        uid: effectiveUid,
+        pid: pid,
+        token: shareToken ?? session.token,
+        shareToken: shareToken ?? undefined,
+      });
+
+      // Restore the previous state if saved
+      if (savedProjectState) {
+        qc.setQueryData(
+          ["project", effectiveUid, pid, session.token],
+          savedProjectState
+        );
+      }
+
+      toast({
+        title: "Processing cancelled",
+        description: "The project processing was cancelled successfully.",
+      });
+
+      // Refetch to ensure we have the latest state
+      if (shareToken) {
+        refetchSharedProject();
+      } else {
+        project.refetch();
+      }
+
+      if (!isMobile) sidebar.setOpen(true);
+    } catch (error: any) {
+      toast({
+        title: "Error cancelling",
+        description: error?.message || "Failed to cancel processing.",
+        variant: "destructive",
+      });
+    }
+
+    setSavedProjectState(null);
+  }, [
+    shareToken,
+    sharedOwner,
+    session.user._id,
+    session.token,
+    cancelProcessing,
+    pid,
+    savedProjectState,
+    qc,
+    toast,
+    refetchSharedProject,
+    project,
+    isMobile,
+    sidebar,
+  ]);
 
   if (shareToken) {
     if (sharedLoading)
@@ -325,24 +417,47 @@ export default function Project({
                     className="inline-flex"
                     onClick={() => {
                       const effectiveUid = shareToken ? (sharedOwner ?? session.user._id) : session.user._id;
+                      
+                      // Show processing and cancel button immediately
+                      setProcessing(true);
+                      setShowCancelButton(true);
+                      sidebar.setOpen(false);
+                      
+                      // Save current project state before processing
+                      const currentState = shareToken ? sharedProject : project.data;
+                      setSavedProjectState(currentState);
+                      
+                      // Create new AbortController for this request
+                      const controller = new AbortController();
+                      abortControllerRef.current = controller;
+                      
                       processProject.mutate(
                         {
                           uid: effectiveUid,
                           pid: currentProjectData._id,
                           token: shareToken ? (sharedPermission ? (shareToken ?? session.token) : (shareToken ?? session.token)) : session.token,
                           shareToken: shareToken ?? undefined,
+                          signal: controller.signal,
                         },
                         {
                           onSuccess: () => {
-                            setProcessing(true);
-                            sidebar.setOpen(false);
+                            // Processing started, UI already updated above
                           },
-                          onError: (error) =>
-                            toast({
-                              title: "Ups! An error occurred.",
-                              description: error.message,
-                              variant: "destructive",
-                            }),
+                          onError: (error: any) => {
+                            // Clear cancel button on error
+                            setShowCancelButton(false);
+                            setSavedProjectState(null);
+                            setProcessing(false);
+                            
+                            // Don't show error if it was aborted by user
+                            if (error?.message !== 'canceled' && error?.name !== 'CanceledError') {
+                              toast({
+                                title: "Ups! An error occurred.",
+                                description: error.message,
+                                variant: "destructive",
+                              });
+                            }
+                          },
                         },
                       );
                     }}
@@ -417,6 +532,18 @@ export default function Project({
               <LoaderCircle className="size-[1em] animate-spin" />
             </div>
             <Progress value={processingProgress} className="w-96" />
+            {showCancelButton && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleCancelProcessing}
+                className="mt-2 flex items-center gap-2"
+                disabled={cancelProcessing.isPending}
+              >
+                <XCircle className="size-4" />
+                {cancelProcessing.isPending ? "Cancelling..." : "Cancel Processing"}
+              </Button>
+            )}
           </Card>
         </div>
       </Transition>

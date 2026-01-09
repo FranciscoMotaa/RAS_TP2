@@ -1,3 +1,53 @@
+var express = require("express");
+var router = express.Router();
+const axios = require("axios");
+
+const multer = require("multer");
+const FormData = require("form-data");
+
+const fs = require("fs");
+const fs_extra = require("fs-extra");
+const path = require("path");
+const mime = require("mime-types");
+
+const JSZip = require("jszip");
+
+const { v4: uuidv4 } = require('uuid');
+
+const {
+  send_msg_tool,
+  send_msg_client,
+  send_msg_client_error,
+  send_msg_client_preview,
+  send_msg_client_preview_error,
+  read_msg,
+} = require("../utils/project_msg");
+
+const Project = require("../controllers/project");
+const Process = require("../controllers/process");
+const Result = require("../controllers/result");
+const Preview = require("../controllers/preview");
+
+const {
+  get_image_docker,
+  get_image_host,
+  post_image,
+  delete_image,
+} = require("../utils/minio");
+
+const storage = multer.memoryStorage();
+var upload = multer({ storage: storage });
+
+const key = fs.readFileSync(__dirname + "/../certs/selfsigned.key");
+const cert = fs.readFileSync(__dirname + "/../certs/selfsigned.crt");
+
+const https = require("https");
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false, // (NOTE: this will disable client verification)
+  cert: cert,
+  key: key,
+});
+
 // Add new image to a project
 router.post(
   "/:user/:project/img",
@@ -65,36 +115,6 @@ router.post(
     }
   }
 );
-        } catch (decErr) {
-          console.log('SHARE_MW jwt.decode failed:', decErr && decErr.message);
-        }
-
-        if (preview && preview.type === 'share_link') {
-          try {
-            const decoded = jwt.verify(token, SHARE_SECRET);
-            console.log('SHARE_MW decoded token:', decoded && { owner: decoded.owner, permission: decoded.permission, projectId: decoded.projectId });
-            if (decoded && decoded.type === 'share_link' && decoded.owner) {
-              // Overwrite params.user for downstream handlers
-              req.params = req.params || {};
-              req.params.user = decoded.owner;
-              req.shareToken = token;
-              req.sharePermission = decoded.permission;
-            }
-          } catch (e) {
-            console.log('SHARE_MW verify failed for share_link token:', e && e.message);
-          }
-        } else {
-          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) {}
-        }
-      } catch (e) {
-        console.log('SHARE_MW middleware inner error:', e && e.message);
-      }
-    }
-  } catch (e) {
-    console.log('SHARE_MW middleware top-level error:', e && e.message);
-  }
-  return next();
-});
 
 const users_ms = "https://users:10001/";
 const minio_domain = process.env.MINIO_DOMAIN;
@@ -980,6 +1000,30 @@ router.post("/:user/:project/process", (req, res, next) => {
         .catch((_) => res.status(400).jsonp(`Error checking if can process`));
     })
     .catch((_) => res.status(501).jsonp(`Error acquiring user's project`));
+});
+
+// Cancel processing of a specific project
+router.delete("/:user/:project/process", async (req, res, next) => {
+  try {
+    // Delete all pending processes for this project
+    const processes = await Process.getProject(req.params.user, req.params.project);
+    
+    for (const process of processes) {
+      await Process.delete(process.user_id, process.project_id, process._id);
+    }
+    
+    // Also delete all pending results
+    const results = await Result.getAll(req.params.user, req.params.project);
+    for (const result of results) {
+      await Result.delete(result.user_id, result.project_id, result.img_id);
+    }
+    
+    console.log(`[projects-ms] Cancelled processing for project ${req.params.project} (user: ${req.params.user})`);
+    res.sendStatus(204);
+  } catch (error) {
+    console.error("[projects-ms] Error cancelling process:", error);
+    res.status(500).jsonp("Error cancelling project processing");
+  }
 });
 
 // Update a specific project

@@ -389,7 +389,7 @@ export function ToolbarButton({
             Preview
           </Button>
           <Button
-            onClick={() => handleAddTool(true)}
+            onClick={() => handleAddTool()}
             className="h-6 text-xs w-full"
           >
             Save

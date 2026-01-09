@@ -824,6 +824,49 @@ router.post('/share/process', function (req, res, next) {
 });
 
 /**
+ * Cancel processing via share token
+ */
+router.delete('/share/process', function (req, res, next) {
+  const token = req.query.token || req.body.token;
+  if (!token) {
+    return res.status(400).jsonp({ error: 'Share token is required' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, SHARE_SECRET);
+    if (!decoded.owner || !decoded.projectId) {
+      return res.status(403).jsonp({ error: 'Invalid share token' });
+    }
+
+    // Verify expiry if present
+    if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
+      return res.status(410).jsonp({ error: 'Share token has expired' });
+    }
+
+    // Build internal URL
+    const targetUrl = projectsURL + `${decoded.owner}/${decoded.projectId}/process`;
+    
+    // Forward x-share-token header for the projects service
+    const opts = {
+      httpsAgent: httpsAgent,
+      headers: {
+        'x-share-token': token,
+      }
+    };
+
+    axiosDelete(req, targetUrl, opts)
+      .then((resp) => res.sendStatus(204))
+      .catch((err) => {
+        console.error('Error cancelling shared project processing:', err.message);
+        res.status(500).jsonp({ error: 'Error cancelling project processing' });
+      });
+  } catch (err) {
+    console.error('Error verifying share token:', err.message);
+    res.status(403).jsonp({ error: 'Invalid or expired share token' });
+  }
+});
+
+/**
  * Generate request to process a project
  * @body Empty
  * @returns String indicating process request has been created
@@ -838,6 +881,25 @@ router.post(
       .catch((err) =>
         res.status(500).jsonp("Error requesting project processing")
       );
+  }
+);
+
+/**
+ * Cancel processing of a project
+ * @body Empty
+ * @returns Empty (204 No Content)
+ */
+router.delete(
+  "/:user/:project/process",
+  auth.checkToken,
+  function (req, res, next) {
+    const proxyUser = resolveUserForProxy(req);
+    axiosDelete(req, projectsURL + `${proxyUser}/${req.params.project}/process`, { httpsAgent: httpsAgent })
+      .then((resp) => res.sendStatus(204))
+      .catch((err) => {
+        console.error("Error cancelling project processing:", err.message || err);
+        res.status(500).jsonp("Error cancelling project processing");
+      });
   }
 );
 

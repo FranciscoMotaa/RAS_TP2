@@ -589,17 +589,22 @@ export const processProject = async ({
   pid,
   token,
   shareToken,
+  signal,
 }: {
   uid: string;
   pid: string;
   token: string;
   shareToken?: string;
+  signal?: AbortSignal;
 }) => {
   // If shareToken is provided, use the shared processing endpoint
   if (shareToken) {
     const response = await api.post<string>(
       `/projects/share/process?token=${encodeURIComponent(shareToken)}`,
       {},
+      {
+        signal,
+      },
     );
 
     if (response.status !== 201 || !response.data)
@@ -615,9 +620,42 @@ export const processProject = async ({
       headers: {
         Authorization: `Bearer ${token}`,
       },
+      signal,
     },
   );
 
   if (response.status !== 201 || !response.data)
     throw new Error("Failed to request project processing");
+};
+
+export const cancelProjectProcessing = async ({
+  uid,
+  pid,
+  token,
+  shareToken,
+}: {
+  uid: string;
+  pid: string;
+  token: string;
+  shareToken?: string;
+}) => {
+  if (shareToken) {
+    const response = await api.delete(
+      `/projects/share/process?token=${encodeURIComponent(shareToken)}`,
+    );
+    if (response.status !== 204)
+      throw new Error("Failed to cancel project processing");
+    return;
+  }
+
+  const response = await api.delete(
+    `/projects/${uid}/${pid}/process`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+  if (response.status !== 204)
+    throw new Error("Failed to cancel project processing");
 };

@@ -69,7 +69,6 @@ export default function Project({
   const [processingSteps, setProcessingSteps] = useState<number>(1);
   const [waitingForPreview, setWaitingForPreview] = useState<string>("");
   const [showCancelButton, setShowCancelButton] = useState<boolean>(false);
-  const [savedProjectState, setSavedProjectState] = useState<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // In shared-link mode, base counts and results on the shared project/owner
@@ -146,7 +145,6 @@ export default function Project({
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
-            setSavedProjectState(null);
           });
         }, 2000);
       }
@@ -182,7 +180,6 @@ export default function Project({
         setProcessing(false);
         setProcessingProgress(0);
         setProcessingSteps(1);
-        setSavedProjectState(null);
         if (!isMobile) sidebar.setOpen(true);
       });
       
@@ -272,20 +269,12 @@ export default function Project({
         shareToken: shareToken ?? undefined,
       });
 
-      // Restore the previous state if saved
-      if (savedProjectState) {
-        qc.setQueryData(
-          ["project", effectiveUid, pid, session.token],
-          savedProjectState
-        );
-      }
-
       toast({
         title: "Processing cancelled",
         description: "The project processing was cancelled successfully.",
       });
 
-      // Refetch to ensure we have the latest state
+      // Refetch to ensure UI is in sync with backend state
       if (shareToken) {
         refetchSharedProject();
       } else {
@@ -300,8 +289,6 @@ export default function Project({
         variant: "destructive",
       });
     }
-
-    setSavedProjectState(null);
   }, [
     shareToken,
     sharedOwner,
@@ -309,7 +296,6 @@ export default function Project({
     session.token,
     cancelProcessing,
     pid,
-    savedProjectState,
     qc,
     toast,
     refetchSharedProject,
@@ -317,6 +303,7 @@ export default function Project({
     isMobile,
     sidebar,
   ]);
+
 
   if (shareToken) {
     if (sharedLoading)
@@ -423,10 +410,6 @@ export default function Project({
                       setShowCancelButton(true);
                       sidebar.setOpen(false);
                       
-                      // Save current project state before processing
-                      const currentState = shareToken ? sharedProject : project.data;
-                      setSavedProjectState(currentState);
-                      
                       // Create new AbortController for this request
                       const controller = new AbortController();
                       abortControllerRef.current = controller;
@@ -446,10 +429,7 @@ export default function Project({
                           onError: (error: any) => {
                             // Clear cancel button on error
                             setShowCancelButton(false);
-                            setSavedProjectState(null);
-                            setProcessing(false);
-                            
-                            // Don't show error if it was aborted by user
+
                             if (error?.message !== 'canceled' && error?.name !== 'CanceledError') {
                               toast({
                                 title: "Ups! An error occurred.",

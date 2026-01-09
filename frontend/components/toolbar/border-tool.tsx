@@ -33,7 +33,7 @@ export default function BorderTool({ disabled }: { disabled: boolean }) {
       setWidth(params.borderWidth);
       setColor(rgbToHex(params.r, params.g, params.b));
     }
-  }, [open]);
+  }, [open, project.tools]);
 
   return (
     <ToolbarButton

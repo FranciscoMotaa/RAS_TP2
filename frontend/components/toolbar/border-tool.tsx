@@ -25,13 +25,15 @@ export default function BorderTool({ disabled }: { disabled: boolean }) {
   }
 
   useEffect(() => {
+    if (!open) return;
+    
     const borderTool = project.tools.find((t) => t.procedure === "border");
     if (borderTool) {
       const params = borderTool.params as BorderToolParams;
       setWidth(params.borderWidth);
       setColor(rgbToHex(params.r, params.g, params.b));
     }
-  }, [project.tools, open]);
+  }, [open, project.tools]);
 
   return (
     <ToolbarButton

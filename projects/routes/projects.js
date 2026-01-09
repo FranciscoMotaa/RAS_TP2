@@ -48,72 +48,73 @@ const httpsAgent = new https.Agent({
   key: key,
 });
 
-const jwt = require('jsonwebtoken');
-const SHARE_SECRET = process.env.SHARE_SECRET || 'segredo_super_secreto_mudar_em_prod';
+// Add new image to a project
+router.post(
+  "/:user/:project/img",
+  upload.single("image"),
+  async (req, res, next) => {
+    console.log(
+      "[projects-ms] POST /:user/:project/img",
+      "user=",
+      req.params.user,
+      "project=",
+      req.params.project,
+      "filename=",
+      req.file && req.file.originalname
+    );
 
-// Middleware: if a share token is present (x-share-token, Authorization bearer, or query token),
-// decode it and, if valid, set req.params.user to the token owner so existing handlers work.
-router.use((req, res, next) => {
-  try {
-    // prefer explicit header
-    let token = req.headers['x-share-token'];
-    console.log('SHARE_MW incoming headers:', req.headers && Object.keys(req.headers));
-    if (!token) {
-      const authHeader = req.headers['authorization'] || '';
-      if (authHeader.startsWith('Bearer ')) token = authHeader.split(' ')[1];
+    if (!req.file) {
+      res.status(400).jsonp("No file found");
+      return;
     }
-    if (!token && req.query && (req.query.token || req.query.shareToken)) token = req.query.token || req.query.shareToken;
 
-    if (token) {
-      // Sanitize token string: remove surrounding quotes or stray whitespace
-      try {
-        if (typeof token === 'string') token = token.trim().replace(/^"|"$/g, '');
-      } catch (_) { }
-      try {
-        // Debug: log basic token shape to diagnose signature failures (length + prefix)
-        try {
-          console.log('SHARE_MW raw x-share-token length:', token ? token.length : 0);
-          console.log('SHARE_MW raw x-share-token head:', token ? token.substr(0, 16) : '');
-        } catch (logErr) { }
+    try {
+      const data = new FormData();
+      data.append("file", req.file.buffer, {
+        filename: req.file.originalname,
+        contentType: req.file.mimetype,
+      });
 
-        // First do a decode-only check. Many incoming tokens are session JWTs
-        // (signed with different secret) which would cause verify() to throw
-        // 'invalid signature'. Only attempt verify() when the decoded token
-        // indicates it's a share link.
-        let preview;
-        try {
-          preview = jwt.decode(token);
-          console.log('SHARE_MW jwt.decode preview:', preview);
-        } catch (decErr) {
-          console.log('SHARE_MW jwt.decode failed:', decErr && decErr.message);
-        }
+      const resp = await post_image(
+        req.params.user,
+        req.params.project,
+        "src",
+        data
+      );
 
-        if (preview && preview.type === 'share_link') {
-          try {
-            const decoded = jwt.verify(token, SHARE_SECRET);
-            console.log('SHARE_MW decoded token:', decoded && { owner: decoded.owner, permission: decoded.permission, projectId: decoded.projectId });
-            if (decoded && decoded.type === 'share_link' && decoded.owner) {
-              // Overwrite params.user for downstream handlers
-              req.params = req.params || {};
-              req.params.user = decoded.owner;
-              req.shareToken = token;
-              req.sharePermission = decoded.permission;
-            }
-          } catch (e) {
-            console.log('SHARE_MW verify failed for share_link token:', e && e.message);
-          }
-        } else {
-          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) { }
-        }
-      } catch (e) {
-        console.log('SHARE_MW middleware inner error:', e && e.message);
+      const og_key_tmp = resp.data.data.imageKey.split("/");
+      const og_key = og_key_tmp[og_key_tmp.length - 1];
+
+      const og_uri = `./images/users/${req.params.user}/projects/${req.params.project}/src/${req.file.originalname}`;
+      const new_uri = `./images/users/${req.params.user}/projects/${req.params.project}/out/${req.file.originalname}`;
+
+      const imgDoc = {
+        og_uri: og_uri,
+        new_uri: new_uri,
+        og_img_key: og_key,
+      };
+
+      // Atomically append image while preventing duplicates by og_uri
+      const updateResult = await Project.appendImage(
+        req.params.user,
+        req.params.project,
+        imgDoc
+      );
+
+      if (!updateResult || updateResult.modifiedCount === 0) {
+        return res
+          .status(400)
+          .jsonp("This project already has an image with that name.");
       }
+
+      console.log("[projects-ms] Image appended successfully");
+      return res.sendStatus(204);
+    } catch (e) {
+      console.error("[projects-ms] Error storing image:", e && e.message);
+      return res.status(501).jsonp(`Error storing image`);
     }
-  } catch (e) {
-    console.log('SHARE_MW middleware top-level error:', e && e.message);
   }
-  return next();
-});
+);
 
 const users_ms = "https://users:10001/";
 const minio_domain = process.env.MINIO_DOMAIN;
@@ -144,35 +145,34 @@ function advanced_tool_num(project) {
 // TODO process message according to type of output
 function process_msg() {
   read_msg(async (msg) => {
+    // These need to be visible in the catch block as well
+    let user_msg_id;
     let process;
+    let timestamp;
     try {
       const msg_content = JSON.parse(msg.content.toString());
       const msg_id = msg_content.correlationId;
-      const timestamp = new Date().toISOString();
+      timestamp = new Date().toISOString();
 
-      const user_msg_id = `update-client-process-${uuidv4()}`;
+      user_msg_id = `update-client-process-${uuidv4()}`;
 
       process = await Process.getOne(msg_id);
 
-      // If there's no matching process entry, this is likely a stale response
-      // (e.g., user cancelled the processing). Ignore it.
-      if (!process) return;
-
       const prev_process_input_img = process.og_img_uri;
       const prev_process_output_img = process.new_img_uri;
-
+      
       // Get current process, delete it and create it's sucessor if possible
       const og_img_uri = process.og_img_uri;
       const img_id = process.img_id;
-
+      
       await Process.delete(process.user_id, process.project_id, process._id);
-
+      
       if (msg_content.status === "error") {
         console.log(JSON.stringify(msg_content));
         if (/preview/.test(msg_id)) {
           send_msg_client_preview_error(`update-client-preview-${uuidv4()}`, timestamp, process.user_id, msg_content.error.code, msg_content.error.msg)
         }
-
+        
         else {
           send_msg_client_error(
             user_msg_id,
@@ -184,14 +184,20 @@ function process_msg() {
         }
         return;
       }
-
+      
       const output_file_uri = msg_content.output.imageURI;
       const type = msg_content.output.type;
       const project = await Project.getOne(process.user_id, process.project_id);
 
+      // Ensure tools are processed in a stable order even if their
+      // stored `position` values have gaps (e.g., after deletions).
+      const tools = Array.isArray(project.tools)
+        ? [...project.tools].sort((a, b) => a.position - b.position)
+        : [];
+
       const next_pos = process.cur_pos + 1;
 
-      if (/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
+      if (/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -214,7 +220,7 @@ function process_msg() {
         const og_key_tmp = resp.data.data.imageKey.split("/");
         const og_key = og_key_tmp[og_key_tmp.length - 1];
 
-
+        
         const preview = {
           type: type,
           file_name: file_name,
@@ -223,10 +229,10 @@ function process_msg() {
           project_id: process.project_id,
           user_id: process.user_id,
         };
-
+        
         await Preview.create(preview);
 
-        if (next_pos >= project.tools.length) {
+        if(next_pos >= tools.length){
           const previews = await Preview.getAll(process.user_id, process.project_id);
 
           let urls = {
@@ -234,7 +240,7 @@ function process_msg() {
             'textResults': []
           };
 
-          for (let p of previews) {
+          for(let p of previews){
             const url_resp = await get_image_host(
               process.user_id,
               process.project_id,
@@ -244,11 +250,11 @@ function process_msg() {
 
             const url = url_resp.data.url;
 
-            if (p.type != "text") urls.imageUrl = url;
+            if(p.type != "text") urls.imageUrl = url;
 
             else urls.textResults.push(url);
           }
-
+          
           send_msg_client_preview(
             `update-client-preview-${uuidv4()}`,
             timestamp,
@@ -259,7 +265,7 @@ function process_msg() {
         }
       }
 
-      if (/preview/.test(msg_id) && next_pos >= project.tools.length) return;
+      if(/preview/.test(msg_id) && next_pos >= tools.length) return;
 
       if (!/preview/.test(msg_id))
         send_msg_client(
@@ -268,7 +274,7 @@ function process_msg() {
           process.user_id
         );
 
-      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
+      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -303,13 +309,13 @@ function process_msg() {
         await Result.create(result);
       }
 
-      if (next_pos >= project.tools.length) return;
+      if (next_pos >= tools.length) return;
 
       const new_msg_id = /preview/.test(msg_id)
         ? `preview-${uuidv4()}`
         : `request-${uuidv4()}`;
 
-      const tool = project.tools.filter((t) => t.position == next_pos)[0];
+      const tool = tools[next_pos];
 
       const tool_name = tool.procedure;
       const params = tool.params;
@@ -338,111 +344,24 @@ function process_msg() {
         params
       );
     } catch (err) {
-      try {
-        const user_msg_id = `update-client-process-${uuidv4()}`;
-        const timestamp = new Date().toISOString();
-        if (process && process.user_id)
-          send_msg_client_error(
-            user_msg_id,
-            timestamp,
-            process.user_id,
-            "30000",
-            "An error happened while processing the project"
-          );
-      } catch (_) {
-        // best-effort error reporting
+      console.error("Error while processing project message", err);
+
+      // Safely notify client if we have enough context; otherwise just swallow
+      if (process && process.user_id) {
+        const safeMsgId = user_msg_id || `update-client-process-${uuidv4()}`;
+        const safeTimestamp = timestamp || new Date().toISOString();
+        send_msg_client_error(
+          safeMsgId,
+          safeTimestamp,
+          process.user_id,
+          "30000",
+          "An error happened while processing the project"
+        );
       }
       return;
     }
   });
 }
-
-// Cooperative cancellation: projects service writes a cancel marker file into the shared
-// images volume. Tool workers check for this marker before doing heavy work.
-const CANCEL_DIR = process.env.CANCEL_DIR || "/app/images/cancel";
-
-function ensureCancelDir() {
-  try {
-    fs.mkdirSync(CANCEL_DIR, { recursive: true });
-  } catch (_) {
-    // best-effort
-  }
-}
-
-function markCancelled(msgIds) {
-  ensureCancelDir();
-  for (const msgId of msgIds || []) {
-    try {
-      if (!msgId) continue;
-      fs.writeFileSync(path.join(CANCEL_DIR, String(msgId)), "1");
-    } catch (_) {
-      // best-effort
-    }
-  }
-}
-
-// Cancel processing of a specific project (best-effort).
-// This stops the orchestration by deleting the current process entries; any in-flight tool result
-// messages will be ignored when they arrive.
-router.post("/:user/:project/process/cancel", async (req, res) => {
-  // Disallow cancelling when accessed through a view-only share link
-  if (req.shareToken && req.sharePermission === "view") {
-    return res.status(403).jsonp("Insufficient permission");
-  }
-
-  try {
-    const msgIds = await Process.getMsgIdsByProjectAndPrefix(
-      req.params.user,
-      req.params.project,
-      "request-"
-    );
-    markCancelled(msgIds);
-    await Process.deleteProjectByMsgPrefix(req.params.user, req.params.project, "request-");
-    return res.sendStatus(204);
-  } catch (_) {
-    return res.status(500).jsonp("Error cancelling project processing");
-  }
-});
-
-// Cancel preview processing for a specific image (best-effort).
-router.post("/:user/:project/preview/:img/cancel", async (req, res) => {
-  if (req.shareToken && req.sharePermission === "view") {
-    return res.status(403).jsonp("Insufficient permission");
-  }
-
-  try {
-    const msgIds = await Process.getMsgIdsForPreviewImage(
-      req.params.user,
-      req.params.project,
-      req.params.img
-    );
-    markCancelled(msgIds);
-    await Process.deletePreviewForImage(req.params.user, req.params.project, req.params.img);
-    return res.sendStatus(204);
-  } catch (_) {
-    return res.status(500).jsonp("Error cancelling preview processing");
-  }
-});
-
-// Cancel processing (non-preview) for a specific image in a project (best-effort).
-router.post("/:user/:project/process/img/:img/cancel", async (req, res) => {
-  if (req.shareToken && req.sharePermission === "view") {
-    return res.status(403).jsonp("Insufficient permission");
-  }
-
-  try {
-    const msgIds = await Process.getMsgIdsForProcessingImage(
-      req.params.user,
-      req.params.project,
-      req.params.img
-    );
-    markCancelled(msgIds);
-    await Process.deleteProcessingForImage(req.params.user, req.params.project, req.params.img);
-    return res.sendStatus(204);
-  } catch (_) {
-    return res.status(500).jsonp("Error cancelling image processing");
-  }
-});
 
 // Get list of all projects from a user
 router.get("/:user", (req, res, next) => {
@@ -456,6 +375,7 @@ router.get("/:user", (req, res, next) => {
           name: p.name,
         });
       }
+
       res.status(200).jsonp(ans);
     })
     .catch((_) => res.status(500).jsonp("Error acquiring user's projects"));
@@ -640,9 +560,9 @@ router.get("/:user/:project/process/url", (req, res, next) => {
         );
         const url = resp.data.url;
 
-        if (r.type == 'text') ans.texts.push({ og_img_id: r.img_id, name: r.file_name, url: url })
+        if(r.type == 'text') ans.texts.push({ og_img_id : r.img_id, name: r.file_name, url: url })
 
-        else ans.imgs.push({ og_img_id: r.img_id, name: r.file_name, url: url })
+        else ans.imgs.push({ og_img_id : r.img_id, name: r.file_name, url: url })
       }
 
       res.status(200).jsonp(ans);
@@ -698,7 +618,7 @@ router.post("/:user/:project/preview/:img", (req, res, next) => {
         req.params.project
       );
 
-      for (let p of prev_preview) {
+      for(let p of prev_preview){
         await delete_image(
           req.params.user,
           req.params.project,
@@ -795,6 +715,15 @@ router.post(
   "/:user/:project/img",
   upload.single("image"),
   async (req, res, next) => {
+    console.log(
+      "[projects-ms] POST /:user/:project/img",
+      "user=",
+      req.params.user,
+      "project=",
+      req.params.project,
+      "filename=",
+      req.file && req.file.originalname
+    );
     if (!req.file) {
       res.status(400).jsonp("No file found");
       return;
@@ -802,6 +731,10 @@ router.post(
 
     Project.getOne(req.params.user, req.params.project)
       .then(async (project) => {
+        console.log(
+          "[projects-ms] Current image count before insert:",
+          Array.isArray(project.imgs) ? project.imgs.length : 0
+        );
         const same_name_img = project.imgs.filter(
           (i) => path.basename(i.og_uri) == req.file.originalname
         );
@@ -841,7 +774,13 @@ router.post(
             });
 
             Project.update(req.params.user, req.params.project, project)
-              .then((_) => res.sendStatus(204))
+              .then((_) => {
+                console.log(
+                  "[projects-ms] Image inserted, new count:",
+                  Array.isArray(project.imgs) ? project.imgs.length : 0
+                );
+                res.sendStatus(204);
+              })
               .catch((_) =>
                 res.status(503).jsonp(`Error updating project information`)
               );
@@ -1061,6 +1000,30 @@ router.post("/:user/:project/process", (req, res, next) => {
         .catch((_) => res.status(400).jsonp(`Error checking if can process`));
     })
     .catch((_) => res.status(501).jsonp(`Error acquiring user's project`));
+});
+
+// Cancel processing of a specific project
+router.delete("/:user/:project/process", async (req, res, next) => {
+  try {
+    // Delete all pending processes for this project
+    const processes = await Process.getProject(req.params.user, req.params.project);
+    
+    for (const process of processes) {
+      await Process.delete(process.user_id, process.project_id, process._id);
+    }
+    
+    // Also delete all pending results
+    const results = await Result.getAll(req.params.user, req.params.project);
+    for (const result of results) {
+      await Result.delete(result.user_id, result.project_id, result.img_id);
+    }
+    
+    console.log(`[projects-ms] Cancelled processing for project ${req.params.project} (user: ${req.params.user})`);
+    res.sendStatus(204);
+  } catch (error) {
+    console.error("[projects-ms] Error cancelling process:", error);
+    res.status(500).jsonp("Error cancelling project processing");
+  }
 });
 
 // Update a specific project

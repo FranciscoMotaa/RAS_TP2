@@ -3,9 +3,6 @@ import {
   addProject,
   addProjectImages,
   addProjectTool,
-  cancelPreviewProjectImage,
-  cancelProjectImageProcessing,
-  cancelProjectProcessing,
   clearProjectTools,
   deleteProject,
   deleteProjectImages,
@@ -14,6 +11,7 @@ import {
   downloadProjectImage,
   downloadProjectResults,
   processProject,
+  cancelProjectProcessing,
   updateProject,
   shareProject,
   updateProjectTool,
@@ -170,18 +168,6 @@ export const useCancelProjectProcessing = () => {
   });
 };
 
-export const useCancelProjectImageProcessing = () => {
-  return useMutation({
-    mutationFn: cancelProjectImageProcessing,
-  });
-};
-
-export const useCancelPreviewProjectImage = () => {
-  return useMutation({
-    mutationFn: cancelPreviewProjectImage,
-  });
-};
-
 export const useAddProjectTool = (uid: string, pid: string, token: string) => {
   const qc = useQueryClient();
   return useMutation({
@@ -234,7 +220,17 @@ export const useDeleteProjectTool = (
   const qc = useQueryClient();
   return useMutation({
     mutationFn: deleteProjectTool,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // Optimistically remove the tool from the project cache to avoid using stale tools on immediate Apply
+      qc.setQueryData(["project", uid, pid, token], (prev: any) => {
+        if (!prev) return prev;
+        if (!prev.tools) return prev;
+        return {
+          ...prev,
+          tools: prev.tools.filter((t: any) => t._id !== variables.toolId),
+        };
+      });
+
       qc.invalidateQueries({ queryKey: ["project", uid, pid, token] });
       qc.invalidateQueries({
         refetchType: "all",

@@ -100,7 +100,7 @@ export default function ProjectItem({ p }: { p: Project }) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             {option === "rename" ? (
               <DialogTitle>Rename Project</DialogTitle>

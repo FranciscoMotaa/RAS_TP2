@@ -23,12 +23,23 @@ export default function ResizeTool({ disabled }: { disabled: boolean }) {
         const { width, height } = await getImageDimensions(currentImage.url);
         setDefaultWidth(width);
         setDefaultHeight(height);
+      } else if (project.imgs && project.imgs.length > 0) {
+        // Use first image dimensions if no image is selected
+        const { width, height } = await getImageDimensions(project.imgs[0].url);
+        setDefaultWidth(width);
+        setDefaultHeight(height);
+      } else {
+        // Default dimensions when no images in project
+        setDefaultWidth(800);
+        setDefaultHeight(600);
       }
     };
     fetchImageDimensions();
-  }, [currentImage]);
+  }, [currentImage, project.imgs]);
 
   useEffect(() => {
+    if (!open) return;
+    
     const fetchToolDimensions = async () => {
       if (project.tools) {
         const resizeTool = project.tools.find((t) => t.procedure === "resize");
@@ -42,7 +53,7 @@ export default function ResizeTool({ disabled }: { disabled: boolean }) {
       }
     };
     fetchToolDimensions();
-  }, [project.tools, defaultHeight, defaultWidth]);
+  }, [open, defaultHeight, defaultWidth]);
 
   function handleSet({ w, h }: { w?: number; h?: number }) {
     if (w && w >= 0) {

@@ -157,6 +157,81 @@ export const updateProject = async ({
   if (response.status !== 204) throw new Error("Failed to update project");
 };
 
+type RawResultsResponse = {
+  imgs: {
+    og_img_id: string;
+    name: string;
+    url: string;
+  }[];
+  texts: {
+    og_img_id: string;
+    name: string;
+    url: string;
+  }[];
+};
+
+async function mapRawResults(response: { data: RawResultsResponse; status: number }) {
+  if (response.status !== 200 || !response.data)
+    throw new Error("Failed to fetch project results");
+
+  const texts: ProjectImageText[] = [];
+  for (const text of response.data.texts) {
+    const resp = await axios.get<string>(text.url, {
+      responseType: "text",
+    });
+
+    if (resp.status !== 200 || !resp.data)
+      throw new Error("Failed to fetch text");
+
+    texts.push({
+      _id: text.og_img_id,
+      name: text.name,
+      text: resp.data,
+    });
+  }
+
+  return {
+    imgs: response.data.imgs.map(
+      (img) =>
+        ({
+          _id: img.og_img_id,
+          name: img.name,
+          url: img.url,
+        }) as ProjectImage,
+    ),
+    texts: texts,
+  };
+}
+
+export const fetchProjectResults = async (
+  uid: string,
+  pid: string,
+  token: string,
+) => {
+  const response = await api.get<RawResultsResponse>(
+    `/projects/${uid}/${pid}/process/url`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  return mapRawResults(response);
+};
+
+export const fetchSharedProjectResults = async (
+  shareToken: string,
+) => {
+  const response = await api.get<RawResultsResponse>(
+    `/projects/share/process/url`,
+    {
+      params: { token: shareToken },
+    },
+  );
+
+  return mapRawResults(response);
+};
 export const getProjectImages = async (
   uid: string,
   pid: string,
@@ -349,12 +424,27 @@ export const previewProjectImage = async ({
   pid,
   imageId,
   token,
+  shareToken,
 }: {
   uid: string;
   pid: string;
   imageId: string;
   token: string;
+  shareToken?: string;
 }) => {
+  // If shareToken is provided, use the shared preview endpoint
+  if (shareToken) {
+    const response = await api.post(
+      `/projects/share/preview/${imageId}?token=${encodeURIComponent(shareToken)}`,
+      {},
+    );
+
+    if (response.status !== 201 || !response.data)
+      throw new Error("Failed to request preview");
+    return;
+  }
+
+  // Otherwise, use the standard endpoint with JWT
   const response = await api.post(
     `/projects/${uid}/${pid}/preview/${imageId}`,
     {},
@@ -494,69 +584,35 @@ export const downloadProjectResults = async ({
   };
 };
 
-export const fetchProjectResults = async (
-  uid: string,
-  pid: string,
-  token: string,
-) => {
-  const response = await api.get<{
-    imgs: {
-      og_img_id: string;
-      name: string;
-      url: string;
-    }[];
-    texts: {
-      og_img_id: string;
-      name: string;
-      url: string;
-    }[];
-  }>(`/projects/${uid}/${pid}/process/url`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  if (response.status !== 200 || !response.data)
-    throw new Error("Failed to fetch project results");
-
-  const texts: ProjectImageText[] = [];
-  for (const text of response.data.texts) {
-    const response = await axios.get<string>(text.url, {
-      responseType: "text",
-    });
-
-    if (response.status !== 200 || !response.data)
-      throw new Error("Failed to fetch text");
-
-    texts.push({
-      _id: text.og_img_id,
-      name: text.name,
-      text: response.data,
-    });
-  }
-
-  return {
-    imgs: response.data.imgs.map(
-      (img) =>
-        ({
-          _id: img.og_img_id,
-          name: img.name,
-          url: img.url,
-        }) as ProjectImage,
-    ),
-    texts: texts,
-  };
-};
-
 export const processProject = async ({
   uid,
   pid,
   token,
+  shareToken,
+  signal,
 }: {
   uid: string;
   pid: string;
   token: string;
+  shareToken?: string;
+  signal?: AbortSignal;
 }) => {
+  // If shareToken is provided, use the shared processing endpoint
+  if (shareToken) {
+    const response = await api.post<string>(
+      `/projects/share/process?token=${encodeURIComponent(shareToken)}`,
+      {},
+      {
+        signal,
+      },
+    );
+
+    if (response.status !== 201 || !response.data)
+      throw new Error("Failed to request project processing");
+    return;
+  }
+
+  // Otherwise, use the standard endpoint with JWT
   const response = await api.post<string>(
     `/projects/${uid}/${pid}/process`,
     {},
@@ -564,6 +620,7 @@ export const processProject = async ({
       headers: {
         Authorization: `Bearer ${token}`,
       },
+      signal,
     },
   );
 
@@ -575,71 +632,30 @@ export const cancelProjectProcessing = async ({
   uid,
   pid,
   token,
+  shareToken,
 }: {
   uid: string;
   pid: string;
   token: string;
+  shareToken?: string;
 }) => {
-  const response = await api.post(
-    `/projects/${uid}/${pid}/process/cancel`,
-    {},
+  if (shareToken) {
+    const response = await api.delete(
+      `/projects/share/process?token=${encodeURIComponent(shareToken)}`,
+    );
+    if (response.status !== 204)
+      throw new Error("Failed to cancel project processing");
+    return;
+  }
+
+  const response = await api.delete(
+    `/projects/${uid}/${pid}/process`,
     {
       headers: {
         Authorization: `Bearer ${token}`,
       },
     },
   );
-
   if (response.status !== 204)
     throw new Error("Failed to cancel project processing");
-};
-
-export const cancelProjectImageProcessing = async ({
-  uid,
-  pid,
-  imageId,
-  token,
-}: {
-  uid: string;
-  pid: string;
-  imageId: string;
-  token: string;
-}) => {
-  const response = await api.post(
-    `/projects/${uid}/${pid}/process/img/${imageId}/cancel`,
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    },
-  );
-
-  if (response.status !== 204)
-    throw new Error("Failed to cancel image processing");
-};
-
-export const cancelPreviewProjectImage = async ({
-  uid,
-  pid,
-  imageId,
-  token,
-}: {
-  uid: string;
-  pid: string;
-  imageId: string;
-  token: string;
-}) => {
-  const response = await api.post(
-    `/projects/${uid}/${pid}/preview/${imageId}/cancel`,
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    },
-  );
-
-  if (response.status !== 204)
-    throw new Error("Failed to cancel preview");
 };

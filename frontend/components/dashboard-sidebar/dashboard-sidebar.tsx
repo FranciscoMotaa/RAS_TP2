@@ -10,7 +10,7 @@ import {
 } from "../ui/sidebar";
 import { Plus, Sparkles } from "lucide-react";
 import NavUser from "./nav-user-sidebar";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Button } from "../ui/button";
 import { useRouter } from "next/navigation";
 import NewProjectDialog from "./new-project-dialog";
@@ -21,8 +21,11 @@ export default function DashboardSidebar() {
   const path = usePathname();
   const router = useRouter();
   const session = useSession();
+  const searchParams = useSearchParams();
+  const shareToken = searchParams.get("shareToken");
   const isFreePlan = session.user.type === "free";
   const isAnonymous = session.user.type === "anonymous";
+  const isGuestMode = !!shareToken;
 
   if (!path.includes("/dashboard/account"))
     return (
@@ -42,7 +45,7 @@ export default function DashboardSidebar() {
                 <Plus /> New Project
               </Button>
             </NewProjectDialog>
-            {(isFreePlan || isAnonymous) && (
+            {!isGuestMode && (isFreePlan || isAnonymous) && (
               <Button
                 className="inline-flex"
                 variant="outline"

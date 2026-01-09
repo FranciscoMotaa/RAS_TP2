@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, LoaderCircle, OctagonAlert, Play } from "lucide-react";
+import { Download, LoaderCircle, OctagonAlert, Play, XCircle } from "lucide-react";
 import { ProjectImageList } from "@/components/project-page/project-image-list";
 import { ViewToggle } from "@/components/project-page/view-toggle";
 import { AddImagesDialog } from "@/components/project-page/add-images-dialog";
@@ -9,11 +9,12 @@ import { Toolbar } from "@/components/toolbar/toolbar";
 import {
   useGetProject,
   useGetProjectResults,
+  useGetSharedProjectResults,
   useGetSocket,
 } from "@/lib/queries/projects";
 import Loading from "@/components/loading";
 import { ProjectProvider } from "@/providers/project-provider";
-import { use, useEffect, useLayoutEffect, useState } from "react";
+import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useSession } from "@/providers/session-provider";
 import {
@@ -53,10 +54,9 @@ export default function Project({
   const [sharedPermission, setSharedPermission] = useState<"view" | "edit" | null>(null);
   const downloadProjectImages = useDownloadProject();
   const processProject = useProcessProject();
-  const cancelProjectProcessing = useCancelProjectProcessing();
+  const cancelProcessing = useCancelProjectProcessing();
   const downloadProjectResults = useDownloadProjectResults();
   const { toast } = useToast();
-  const socket = useGetSocket(session.token);
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
   const router = useRouter();
@@ -68,27 +68,53 @@ export default function Project({
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [processingSteps, setProcessingSteps] = useState<number>(1);
   const [waitingForPreview, setWaitingForPreview] = useState<string>("");
+  const [showCancelButton, setShowCancelButton] = useState<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const totalProcessingSteps =
-    ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
-  const projectResults = useGetProjectResults(shareToken ? "" : session.user._id, pid, session.token);
+  // In shared-link mode, base counts and results on the shared project/owner
+  const totalProcessingSteps = shareToken
+    ? ((sharedProject?.tools?.length ?? 0) * (sharedProject?.imgs?.length ?? 0))
+    : ((project.data?.tools?.length ?? 0) * (project.data?.imgs?.length ?? 0));
 
+  const resultsUid = shareToken ? "" : session.user._id;
+  const ownerResults = useGetProjectResults(resultsUid, pid, session.token);
+  const sharedResults = useGetSharedProjectResults(shareToken);
+  const projectResults = shareToken ? sharedResults : ownerResults;
+
+  // Socket should listen on the project owner's room when viewing via share link
+  const socketRoomId = shareToken ? (sharedOwner ?? undefined) : undefined;
+  const socket = useGetSocket(session.token, socketRoomId);
+  
   useEffect(() => {
     if (!shareToken) return;
     setSharedLoading(true);
     api
       .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
-      .then((resp) => {
-        setSharedProject(resp.data.project);
-        setSharedPermission(resp.data.permission);
-        setSharedOwner(resp.data.owner ?? null);
-        setSharedLoading(false);
-      })
+        .then((resp) => {
+          setSharedProject(resp.data.project);
+          setSharedPermission(resp.data.permission);
+          setSharedOwner(resp.data.owner ?? null);
+          setSharedLoading(false);
+        })
       .catch((err) => {
         setSharedError(err?.response?.data?.error || err.message || "Erro ao carregar projeto partilhado");
         setSharedLoading(false);
       });
   }, [shareToken]);
+  
+  // Refetch shared project when tools change (via socket or manual trigger)
+  const refetchSharedProject = useCallback(() => {
+    if (!shareToken) return;
+    api
+      .get(`/projects/share/project?token=${encodeURIComponent(shareToken)}`)
+      .then((resp) => {
+        setSharedProject(resp.data.project);
+      })
+      .catch((err) => {
+        console.error('Error refetching shared project:', err);
+      });
+  }, [shareToken]);
+  
   const qc = useQueryClient();
 
   useLayoutEffect(() => {
@@ -102,7 +128,6 @@ export default function Project({
 
   useEffect(() => {
     function onProcessUpdate() {
-      if (!processing) return;
       setProcessingSteps((prev) => prev + 1);
 
       const progress = Math.min(
@@ -111,14 +136,23 @@ export default function Project({
       );
 
       setProcessingProgress(progress);
-      if (processingSteps >= totalProcessingSteps) {
+      
+      if (totalProcessingSteps > 0 && processingSteps >= totalProcessingSteps) {
+        setShowCancelButton(false);
+        
         setTimeout(() => {
           projectResults.refetch().then(() => {
             setProcessing(false);
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
-            router.push("?mode=results&view=grid");
+            
+            // Redirect to results view after processing completes
+            const params = new URLSearchParams();
+            params.set("mode", "results");
+            params.set("view", "grid");
+            if (shareToken) params.set("shareToken", shareToken);
+            router.push(`${path}?${params.toString()}`);
           });
         }, 2000);
       }
@@ -126,21 +160,59 @@ export default function Project({
 
     let active = true;
 
-    const handler = () => {
-      if (active) onProcessUpdate();
-    };
+    if (active && socket.data) {
+      socket.data.on("process-update", () => {
+        if (active) onProcessUpdate();
+      });
 
-    if (socket.data) {
-      socket.data.on("process-update", handler);
+      socket.data.on("process-error", (msg: string) => {
+        if (!active) return;
+        
+        // Clear cancel button on error
+        setShowCancelButton(false);
+        
+        try {
+          const parsed = JSON.parse(msg) as { error_code?: string; error_msg?: string };
+          toast({
+            title: "Ups! An error occurred.",
+            description: `${parsed.error_code ?? ""} ${parsed.error_msg ?? ""}`.trim() || "An error happened while processing the project.",
+            variant: "destructive",
+          });
+        } catch {
+          toast({
+            title: "Ups! An error occurred.",
+            description: "An error happened while processing the project.",
+            variant: "destructive",
+          });
+        }
+        setProcessing(false);
+        setProcessingProgress(0);
+        setProcessingSteps(1);
+        if (!isMobile) sidebar.setOpen(true);
+      });
+      
+      // Listen for project updates (when tools are added/updated/deleted)
+      socket.data.on("project-updated", () => {
+        if (active) {
+          if (shareToken) {
+            refetchSharedProject();
+          } else {
+            project.refetch();
+          }
+        }
+      });
     }
 
     return () => {
       active = false;
-      if (socket.data) socket.data.off("process-update", handler);
+      if (socket.data) {
+        socket.data.off("process-update", onProcessUpdate);
+        socket.data.off("process-error");
+        socket.data.off("project-updated");
+      }
     };
   }, [
     pid,
-    processing,
     processingSteps,
     router,
     session.token,
@@ -150,7 +222,96 @@ export default function Project({
     sidebar,
     isMobile,
     projectResults,
+    searchParams,
+    toast,
+    shareToken,
+    project,
+    refetchSharedProject,
   ]);
+  
+  // Listen for custom event from toolbar when tools are modified in shared mode
+  useEffect(() => {
+    if (!shareToken) return; // Only listen if in shared mode
+    
+    const handleRefetchShared = () => {
+      refetchSharedProject();
+    };
+    
+    window.addEventListener('refetch-shared-project', handleRefetchShared);
+    
+    return () => {
+      window.removeEventListener('refetch-shared-project', handleRefetchShared);
+    };
+  }, [shareToken, refetchSharedProject]);
+  
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const handleCancelProcessing = useCallback(async () => {
+    // Abort the HTTP request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Reset UI state
+    setShowCancelButton(false);
+    setProcessing(false);
+    setProcessingProgress(0);
+    setProcessingSteps(1);
+
+    const effectiveUid = shareToken ? (sharedOwner ?? session.user._id) : session.user._id;
+
+    // Call backend to cancel processing
+    try {
+      await cancelProcessing.mutateAsync({
+        uid: effectiveUid,
+        pid: pid,
+        token: shareToken ?? session.token,
+        shareToken: shareToken ?? undefined,
+      });
+
+      toast({
+        title: "Processing cancelled",
+        description: "The project processing was cancelled successfully.",
+      });
+
+      // Refetch to ensure UI is in sync with backend state
+      if (shareToken) {
+        refetchSharedProject();
+      } else {
+        project.refetch();
+      }
+
+      if (!isMobile) sidebar.setOpen(true);
+    } catch (error: any) {
+      toast({
+        title: "Error cancelling",
+        description: error?.message || "Failed to cancel processing.",
+        variant: "destructive",
+      });
+    }
+  }, [
+    shareToken,
+    sharedOwner,
+    session.user._id,
+    session.token,
+    cancelProcessing,
+    pid,
+    qc,
+    toast,
+    refetchSharedProject,
+    project,
+    isMobile,
+    sidebar,
+  ]);
+
 
   if (shareToken) {
     if (sharedLoading)
@@ -198,20 +359,20 @@ export default function Project({
   // `tools` and `imgs` are arrays (avoid runtime `cannot read property 'tools' of null`).
   const currentProjectData = shareToken
     ? {
-      ...(sharedProject || {}),
-      // ensure user_id is set to owner so downstream hooks call the correct uid
-      user_id: sharedOwner ?? sharedProject?.user_id ?? null,
-      tools: sharedProject?.tools ?? [],
-      imgs: sharedProject?.imgs ?? [],
-    }
+        ...(sharedProject || {}),
+        // ensure user_id is set to owner so downstream hooks call the correct uid
+        user_id: sharedOwner ?? sharedProject?.user_id ?? null,
+        tools: sharedProject?.tools ?? [],
+        imgs: sharedProject?.imgs ?? [],
+      }
     : {
-      ...(project.data || {}),
-      tools: project.data?.tools ?? [],
-      imgs: project.data?.imgs ?? [],
-    };
+        ...(project.data || {}),
+        tools: project.data?.tools ?? [],
+        imgs: project.data?.imgs ?? [],
+      };
 
   const currentProjectResults = shareToken
-    ? { imgs: currentProjectData.imgs ?? [], texts: [] }
+    ? projectResults.data ?? { imgs: currentProjectData.imgs ?? [], texts: [] }
     : projectResults.data ?? { imgs: [], texts: [] };
 
   return (
@@ -224,9 +385,16 @@ export default function Project({
         {/* Header */}
         <div className="flex flex-col xl:flex-row justify-center items-start xl:items-center xl:justify-between border-b border-sidebar-border py-2 px-2 md:px-3 xl:px-4 h-fit gap-2">
           <div className="flex items-center justify-between w-full xl:w-auto gap-2">
-            <h1 className="text-lg font-semibold truncate">
-              {currentProjectData?.name}
-            </h1>
+            <div className="flex items-center gap-2 truncate">
+              <h1 className="text-lg font-semibold truncate">
+                {currentProjectData?.name}
+              </h1>
+              {shareToken && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  Shared access
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 xl:hidden">
               <ViewToggle />
               <ModeToggle />
@@ -244,23 +412,40 @@ export default function Project({
                     className="inline-flex"
                     onClick={() => {
                       const effectiveUid = shareToken ? (sharedOwner ?? session.user._id) : session.user._id;
+                      
+                      // Show processing and cancel button immediately
+                      setProcessing(true);
+                      setShowCancelButton(true);
+                      sidebar.setOpen(false);
+                      
+                      // Create new AbortController for this request
+                      const controller = new AbortController();
+                      abortControllerRef.current = controller;
+                      
                       processProject.mutate(
                         {
                           uid: effectiveUid,
                           pid: currentProjectData._id,
                           token: shareToken ? (sharedPermission ? (shareToken ?? session.token) : (shareToken ?? session.token)) : session.token,
+                          shareToken: shareToken ?? undefined,
+                          signal: controller.signal,
                         },
                         {
                           onSuccess: () => {
-                            setProcessing(true);
-                            sidebar.setOpen(false);
+                            // Processing started, UI already updated above
                           },
-                          onError: (error) =>
-                            toast({
-                              title: "Ups! An error occurred.",
-                              description: error.message,
-                              variant: "destructive",
-                            }),
+                          onError: (error: any) => {
+                            // Clear cancel button on error
+                            setShowCancelButton(false);
+
+                            if (error?.message !== 'canceled' && error?.name !== 'CanceledError') {
+                              toast({
+                                title: "Ups! An error occurred.",
+                                description: error.message,
+                                variant: "destructive",
+                              });
+                            }
+                          },
                         },
                       );
                     }}
@@ -329,45 +514,28 @@ export default function Project({
         leaveTo="opacity-0"
       >
         <div className="absolute top-0 left-0 h-screen w-screen bg-black/70 z-50 flex justify-center items-center">
-          <Card className="p-4 flex flex-col justify-center items-center gap-4">
+          <Card className="p-6 flex flex-col justify-center items-center gap-4 max-w-md">
             <div className="flex gap-2 items-center text-lg font-semibold">
               <h1>Processing</h1>
               <LoaderCircle className="size-[1em] animate-spin" />
             </div>
             <Progress value={processingProgress} className="w-96" />
-            <Button
-              variant="outline"
-              onClick={() => {
-                const effectiveUid = shareToken
-                  ? (sharedOwner ?? session.user._id)
-                  : session.user._id;
-
-                cancelProjectProcessing.mutate(
-                  {
-                    uid: effectiveUid,
-                    pid: currentProjectData._id,
-                    token: shareToken ?? session.token,
-                  },
-                  {
-                    onSuccess: () => {
-                      setProcessing(false);
-                      if (!isMobile) sidebar.setOpen(true);
-                      setProcessingProgress(0);
-                      setProcessingSteps(1);
-                      toast({ title: "Processing cancelled." });
-                    },
-                    onError: (error) =>
-                      toast({
-                        title: "Ups! An error occurred.",
-                        description: error.message,
-                        variant: "destructive",
-                      }),
-                  },
-                );
-              }}
-            >
-              Cancel
-            </Button>
+            <div className="flex w-full justify-between text-sm text-gray-600">
+              <span>{processingProgress}%</span>
+              <span>{processingSteps} / {totalProcessingSteps}</span>
+            </div>
+            {showCancelButton && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleCancelProcessing}
+                className="mt-2 flex items-center gap-2"
+                disabled={cancelProcessing.isPending}
+              >
+                <XCircle className="size-4" />
+                {cancelProcessing.isPending ? "Cancelling..." : "Cancel Processing"}
+              </Button>
+            )}
           </Card>
         </div>
       </Transition>

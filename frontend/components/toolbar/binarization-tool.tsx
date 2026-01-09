@@ -7,18 +7,20 @@ import { BinarizationToolParams } from "@/lib/tool-types";
 
 export default function BinarizationTool({ disabled }: { disabled: boolean }) {
   const project = useProjectInfo();
-  const defaultValue = 0;
+  const defaultValue = 127;
   const [value, setValue] = useState<number>(defaultValue);
   const [open, setOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (!open) return;
+    
     const binarizationTool = project.tools.find(
       (t) => t.procedure === "binarization",
     );
     if (binarizationTool) {
       setValue((binarizationTool.params as BinarizationToolParams).threshold);
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   return (
     <ToolbarButton
@@ -37,7 +39,7 @@ export default function BinarizationTool({ disabled }: { disabled: boolean }) {
       label="Black & White"
     >
       <Slider
-        defaultValue={[0]}
+        defaultValue={[127]}
         max={255}
         step={1}
         value={[value]}

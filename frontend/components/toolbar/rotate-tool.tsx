@@ -12,11 +12,13 @@ export default function RotateTool({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (!open) return;
+    
     const rotateTool = project.tools.find((t) => t.procedure === "rotate");
     if (rotateTool) {
       setValue((rotateTool.params as RotateToolParams).degrees);
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   return (
     <ToolbarButton

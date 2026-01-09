@@ -12,13 +12,15 @@ export default function BrightnessTool({ disabled }: { disabled: boolean }) {
   const [open, setOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (!open) return;
+    
     const brightnessTool = project.tools.find(
       (t) => t.procedure === "brightness",
     );
     if (brightnessTool) {
       setValue((brightnessTool.params as BrightnessToolParams).brightness);
     }
-  }, [project.tools, open]);
+  }, [open]);
 
   return (
     <ToolbarButton

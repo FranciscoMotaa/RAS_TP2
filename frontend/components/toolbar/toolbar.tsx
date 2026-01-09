@@ -1,38 +1,3 @@
-import { useSearchParams } from "next/navigation";
-import { useState } from "react";
-import { useClearProjectTools } from "@/lib/mutations/projects";
-import { useSession } from "@/providers/session-provider";
-import { useProjectInfo } from "@/providers/project-provider";
-import { Button } from "../ui/button";
-import { Eraser, GripVertical } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "../ui/dialog";
-
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-
 import BrightnessTool from "./brightness-tool";
 import ContrastTool from "./contrast-tool";
 import CropTool from "./crop-tool";
@@ -48,27 +13,61 @@ import ObjectAITool from "./object-ai-tool";
 import PeopleAITool from "./people-ai-tool";
 import TextAITool from "./text-ai-tool";
 import UpgradeAITool from "./upgrade-ai-tool";
+import { useClearProjectTools } from "@/lib/mutations/projects";
+import { useSession } from "@/providers/session-provider";
+import { useProjectInfo } from "@/providers/project-provider";
+import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../ui/dialog";
+import { Eraser } from "lucide-react";
+import { useState } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { ComponentType } from "react";
 
+type SortableToolItemProps = {
+  id: string;
+  Component: ComponentType<{ disabled: boolean }>;
+  disabled: boolean;
+};
 
-function SortableToolItem({ id, Component, disabled }: any) {
+function SortableToolItem({ id, Component, disabled }: SortableToolItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    zIndex: isDragging ? 100 : 'auto',
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.4 : 1,
   };
 
   return (
     <div ref={setNodeRef} style={style} className="relative group flex items-center">
-      {/* Visual handle */}
-      <div 
-        {...attributes} 
-        {...listeners} 
-        className="absolute -left-4 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing p-1 text-gray-400"
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute -left-2 h-8 flex items-center opacity-0 group-hover:opacity-100 text-gray-400 cursor-grab select-none"
+        aria-label="Reorder tool"
       >
-        <GripVertical size={14} />
+        :::
       </div>
       <Component disabled={disabled} />
     </div>
@@ -76,14 +75,11 @@ function SortableToolItem({ id, Component, disabled }: any) {
 }
 
 export function Toolbar() {
-  const searchParams = useSearchParams();
-  const view = searchParams.get("view") ?? "grid";
-  const disabled = view === "grid";
+  const disabled = false;
   const project = useProjectInfo();
   const session = useSession();
+
   const [open, setOpen] = useState<boolean>(false);
-
-
   const [toolOrder, setToolOrder] = useState([
     { id: "brightness", Component: BrightnessTool },
     { id: "contrast", Component: ContrastTool },
@@ -94,29 +90,19 @@ export function Toolbar() {
     { id: "resize", Component: ResizeTool },
     { id: "border", Component: BorderTool },
     { id: "watermark", Component: WatermarkTool },
-    { id: "bg-removal", Component: BgRemovalAITool },
-    { id: "ai-crop", Component: CropAITool },
-    { id: "object-ai", Component: ObjectAITool },
-    { id: "people-ai", Component: PeopleAITool },
-    { id: "text-ai", Component: TextAITool },
-    { id: "upgrade-ai", Component: UpgradeAITool },
+    { id: "bgRemovalAI", Component: BgRemovalAITool },
+    { id: "cropAI", Component: CropAITool },
+    { id: "objectAI", Component: ObjectAITool },
+    { id: "peopleAI", Component: PeopleAITool },
+    { id: "textAI", Component: TextAITool },
+    { id: "upgradeAI", Component: UpgradeAITool },
   ]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
   );
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      setToolOrder((items) => {
-        const oldIndex = items.findIndex((i) => i.id === active.id);
-        const newIndex = items.findIndex((i) => i.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
-    }
-  };
 
   const clearTools = useClearProjectTools(
     session.user._id,
@@ -124,27 +110,33 @@ export function Toolbar() {
     session.token,
   );
 
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setToolOrder((items) => {
+      const oldIndex = items.findIndex((item) => item.id === active.id);
+      const newIndex = items.findIndex((item) => item.id === over.id);
+      return arrayMove(items, oldIndex, newIndex);
+    });
+  }
+
   return (
     <div className="flex h-full w-14 flex-col justify-between items-center border-r bg-background p-2">
       <div className="flex flex-col gap-2 items-center w-full">
         <span className="text-[10px] font-bold uppercase text-gray-400 mb-2">Tools</span>
-        
-        {/* DND Context wrapper */}
-        <DndContext 
-          sensors={sensors} 
-          collisionDetection={closestCenter} 
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext 
-            items={toolOrder.map(t => t.id)} 
-            strategy={verticalListSortingStrategy}
-          >
-            {toolOrder.map((tool) => (
-              <SortableToolItem 
-                key={tool.id} 
-                id={tool.id} 
-                Component={tool.Component} 
-                disabled={disabled} 
+          <SortableContext items={toolOrder} strategy={verticalListSortingStrategy}>
+            {toolOrder.map(({ id, Component }) => (
+              <SortableToolItem
+                key={id}
+                id={id}
+                Component={Component}
+                disabled={disabled}
               />
             ))}
           </SortableContext>
@@ -152,7 +144,6 @@ export function Toolbar() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        {/* Dialog code */}
         <DialogTrigger asChild>
           <Button
             variant="outline"
@@ -162,7 +153,7 @@ export function Toolbar() {
             <Eraser />
           </Button>
         </DialogTrigger>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Clear Tools?</DialogTitle>
             <DialogDescription>

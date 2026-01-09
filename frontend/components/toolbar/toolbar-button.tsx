@@ -28,6 +28,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGetSocket } from "@/lib/queries/projects";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { jwtDecode } from "jwt-decode";
+import { isAITool } from "@/lib/tool-types";
 
 interface ToolbarButtonProps {
   open?: boolean;
@@ -105,6 +106,12 @@ export function ToolbarButton({
           token: effectiveToken,
         },
         {
+          onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
+          },
           onError: (error) => {
             toast({
               title: "Ups! An error occurred.",
@@ -118,12 +125,25 @@ export function ToolbarButton({
   }
 
   function handlePreview() {
+    // If no image is selected, use the first image from the project
+    const imageId = currentImage?._id ?? (project.imgs && project.imgs.length > 0 ? project.imgs[0]._id : "");
+    
+    if (!imageId) {
+      toast({
+        title: "No images to preview",
+        description: "Add images to the project before previewing edits.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     previewEdits.mutate(
       {
         uid: ownerId,
         pid: project._id,
-        imageId: currentImage?._id ?? "",
+        imageId: imageId,
         token: effectiveToken,
+        shareToken: shareToken ?? undefined,
       },
       {
         onSuccess: () => {
@@ -146,6 +166,15 @@ export function ToolbarButton({
   }
 
   function handleAddTool(preview?: boolean) {
+    // If params are at default: delete the tool if it exists; otherwise no-op
+    if (isDefault) {
+      if (prevTool) {
+        handleDeleteTool();
+      }
+      setOpen(false);
+      return;
+    }
+
     if (prevTool) {
       updateTool.mutate(
         {
@@ -157,6 +186,10 @@ export function ToolbarButton({
         },
         {
           onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
             if (preview) handlePreview();
           },
           onError: (error) => {
@@ -181,6 +214,10 @@ export function ToolbarButton({
         },
         {
           onSuccess: () => {
+            // Trigger refetch for shared projects via custom event
+            if (shareToken) {
+              window.dispatchEvent(new CustomEvent('refetch-shared-project'));
+            }
             if (preview) handlePreview();
           },
           onError: (error) => {
@@ -232,14 +269,23 @@ export function ToolbarButton({
         return;
       }
       if (noParams) {
-        if (prevTool) handleDeleteTool();
-        else handleAddTool(true);
+        if (prevTool) {
+          handleDeleteTool();
+        } else {
+          // AI tools should be added but NOT trigger preview automatically
+          // User must click Apply to process them
+          const skipPreview = isAITool(tool.procedure);
+          handleAddTool(skipPreview ? false : true);
+        }
       }
       return;
     }
     if (noParams) {
-      if (prevTool) handleDeleteTool();
-      else handleAddTool(true);
+      if (prevTool) {
+        handleDeleteTool();
+      } else {
+        handleAddTool(true);
+      }
     }
   }
 
@@ -257,6 +303,13 @@ export function ToolbarButton({
       setTimedout(false);
     }
   }, [timedout, waiting, preview]);
+
+  // If preview.waiting is cleared elsewhere (e.g., dialog close), also clear local spinner state
+  useEffect(() => {
+    if (preview.waiting === "" && waiting) {
+      setWaiting(false);
+    }
+  }, [preview.waiting, waiting]);
 
   useEffect(() => {
     let active = true;
@@ -373,13 +426,11 @@ export function ToolbarButton({
             variant="outline"
             onClick={() => handleAddTool(true)}
             className="h-6 text-xs"
-            disabled={isDefault}
           >
             Preview
           </Button>
           <Button
             onClick={() => handleAddTool()}
-            disabled={isDefault}
             className="h-6 text-xs w-full"
           >
             Save

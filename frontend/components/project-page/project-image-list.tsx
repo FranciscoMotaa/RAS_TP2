@@ -10,7 +10,7 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import { useGetSocket } from "@/lib/queries/projects";
-import { useProjectInfo } from "@/providers/project-provider";
+import { useProjectInfo, usePreview } from "@/providers/project-provider";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/providers/session-provider";
 import {
@@ -26,6 +26,7 @@ import * as ProjectTypes from "@/lib/projects";
 import { ProjectImage } from "./project-image";
 import { useQueryClient } from "@tanstack/react-query";
 import ProjectText from "./project-text";
+import { jwtDecode } from "jwt-decode";
 
 export function ProjectImageList({
   setCurrentImageId,
@@ -41,6 +42,7 @@ export function ProjectImageList({
   const searchParams = useSearchParams();
   const view = searchParams.get("view") ?? "grid";
   const mode = searchParams.get("mode") ?? "edit";
+  const shareToken = searchParams.get("shareToken") ?? searchParams.get("token");
 
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
@@ -52,10 +54,23 @@ export function ProjectImageList({
 
   const project = useProjectInfo();
   const session = useSession();
+  const preview = usePreview();
   const { toast } = useToast();
 
   const qc = useQueryClient();
-  const socket = useGetSocket(session.token);
+  
+  // If shareToken is present, we need to connect to the owner's room
+  let socketRoomId: string | undefined = undefined;
+  if (shareToken) {
+    try {
+      const decoded = jwtDecode<{ owner?: string }>(shareToken);
+      if (decoded.owner) socketRoomId = decoded.owner;
+    } catch (e) {
+      socketRoomId = project.user_id;
+    }
+  }
+  
+  const socket = useGetSocket(session.token, socketRoomId);
 
   useEffect(() => {
     let active = true;
@@ -76,6 +91,9 @@ export function ProjectImageList({
 
       socket.data.on("preview-ready", (msg) => {
         if (active) {
+          // Only show preview if this client requested it
+          if (!preview.waiting || preview.waiting === "") return;
+          
           const msg_content = JSON.parse(msg) as {
             imageUrl: string;
             textResults: string[];
@@ -85,6 +103,7 @@ export function ProjectImageList({
           setPreviewImage(url);
           setPreviewText(textResults);
           setPreviewOpen(true);
+          preview.setWaiting(""); // Clear waiting state
         }
       });
     }
@@ -96,7 +115,7 @@ export function ProjectImageList({
         socket.data.off("preview-ready");
       }
     };
-  }, [socket.data, toast]);
+  }, [socket.data, toast, preview]);
 
   useEffect(() => {
     if (view === "grid") {
@@ -142,6 +161,8 @@ export function ProjectImageList({
       onOpenChange={() => {
         setPreviewOpen(false);
         setPreviewImage(null);
+        setPreviewText([]);
+        preview.setWaiting(""); // ensure waiting spinner clears when closing preview
       }}
     >
       <div className="size-full">
@@ -158,14 +179,22 @@ export function ProjectImageList({
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 p-2 overflow-scroll overflow-x-hidden h-fit">
-                  {(mode === "results" ? results.imgs : project.imgs).map(
-                    (image, index) => (
+                  {(
+                    mode === "results"
+                      ? results.imgs
+                      : project.tools.length > 0 && results.imgs.length > 0
+                        ? results.imgs
+                        : project.imgs
+                  ).map((image, index) => (
                       <button
                         key={image._id}
                         className="aspect-square"
                         onClick={() => {
                           setJumpTo(index);
-                          router.push(`?mode=${mode}&view=carousel`);
+                          const params = new URLSearchParams(searchParams.toString());
+                          params.set("mode", mode);
+                          params.set("view", "carousel");
+                          router.push(`?${params.toString()}`);
                           qc.invalidateQueries({
                             queryKey: ["socket"],
                             refetchType: "all",
@@ -187,7 +216,10 @@ export function ProjectImageList({
                               ? results.imgs.length
                               : project.imgs.length) + index,
                           );
-                          router.push(`?mode=${mode}&view=carousel`);
+                          const params = new URLSearchParams(searchParams.toString());
+                          params.set("mode", mode);
+                          params.set("view", "carousel");
+                          router.push(`?${params.toString()}`);
                           qc.invalidateQueries({
                             queryKey: ["socket"],
                             refetchType: "all",
@@ -215,8 +247,14 @@ export function ProjectImageList({
             <Carousel setApi={setApi}>
               <CarouselContent className="aspect-auto h-[calc(100vh-99px-0.5rem-36px)] xl:h-[calc(100vh-55px-0.5rem-36px)]">
                 {mode === "edit" &&
-                  project.imgs.length > 0 &&
-                  project.imgs.map((image) => (
+                  (project.tools.length > 0 && results.imgs.length > 0
+                    ? results.imgs
+                    : project.imgs
+                  ).length > 0 &&
+                  (project.tools.length > 0 && results.imgs.length > 0
+                    ? results.imgs
+                    : project.imgs
+                  ).map((image) => (
                     <CarouselItem key={image._id}>
                       <ProjectImage image={image} animation={false} />
                     </CarouselItem>
@@ -245,7 +283,10 @@ export function ProjectImageList({
           </div>
         )}
       </div>
-      <DialogContent className="max-w-[80%] mt-4 overflow-y-scroll overflow-x-hidden">
+      <DialogContent
+        aria-describedby={undefined}
+        className="max-w-[80%] mt-4 overflow-y-scroll overflow-x-hidden"
+      >
         <DialogHeader>
           <DialogTitle>Image Preview</DialogTitle>
         </DialogHeader>

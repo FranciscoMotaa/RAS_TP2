@@ -37,6 +37,25 @@ export default function NewProjectDialog({
   const addProject = useAddProject(session.user._id, session.token);
 
   function handleCreate() {
+    if (imageFiles.length === 0 || name === "") return;
+
+    const names = new Set<string>();
+    const hasDuplicateNames = imageFiles.some((file) => {
+      if (names.has(file.name)) return true;
+      names.add(file.name);
+      return false;
+    });
+
+    if (hasDuplicateNames) {
+      toast({
+        title: "Duplicate image names are not allowed.",
+        description:
+          "Please remove or rename images so that each filename is unique.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     addProject.mutate(
       {
         uid: session.user._id,
@@ -50,12 +69,18 @@ export default function NewProjectDialog({
           toast({
             title: "Project created successfully.",
           });
+          // Navigate to new project without shareToken
           if (project) router.push(`/dashboard/${project._id}`);
         },
-        onError: (error) => {
+        onError: (error: any) => {
+          const backendMessage =
+            error?.response?.data && typeof error.response.data === "string"
+              ? error.response.data
+              : undefined;
+
           toast({
             title: "Ups! An error occurred.",
-            description: error.message,
+            description: backendMessage ?? error.message,
             variant: "destructive",
           });
         },
@@ -78,7 +103,7 @@ export default function NewProjectDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
         </DialogHeader>

@@ -27,6 +27,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGetSocket } from "@/lib/queries/projects";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { jwtDecode } from "jwt-decode";
+import { isAITool } from "@/lib/tool-types";
 
 interface ToolbarButtonProps {
   open?: boolean;
@@ -237,14 +238,23 @@ export function ToolbarButton({
         return;
       }
       if (noParams) {
-        if (prevTool) handleDeleteTool();
-        else handleAddTool(true);
+        if (prevTool) {
+          handleDeleteTool();
+        } else {
+          // AI tools should be added but NOT trigger preview automatically
+          // User must click Apply to process them
+          const skipPreview = isAITool(tool.procedure);
+          handleAddTool(skipPreview ? false : true);
+        }
       }
       return;
     }
     if (noParams) {
-      if (prevTool) handleDeleteTool();
-      else handleAddTool(true);
+      if (prevTool) {
+        handleDeleteTool();
+      } else {
+        handleAddTool(true);
+      }
     }
   }
 

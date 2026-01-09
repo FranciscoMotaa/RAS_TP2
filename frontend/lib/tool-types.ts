@@ -66,3 +66,16 @@ export type ToolNames =
   | "obj_ai"
   | "people_ai"
   | "project";
+
+export const AI_TOOLS: ToolNames[] = [
+  "cut_ai",
+  "upgrade_ai",
+  "bg_remove_ai",
+  "text_ai",
+  "obj_ai",
+  "people_ai",
+];
+
+export function isAITool(toolName: string): boolean {
+  return AI_TOOLS.includes(toolName as ToolNames);
+}

@@ -1,99 +1,51 @@
-// Add new image to a project
-router.post(
-  "/:user/:project/img",
-  upload.single("image"),
-  async (req, res, next) => {
-    console.log(
-      "[projects-ms] POST /:user/:project/img",
-      "user=",
-      req.params.user,
-      "project=",
-      req.params.project,
-      "filename=",
-      req.file && req.file.originalname
-    );
+var express = require("express");
+var router = express.Router();
+const axios = require("axios");
 
-    if (!req.file) {
-      res.status(400).jsonp("No file found");
-      return;
-    }
+const multer = require("multer");
+const FormData = require("form-data");
 
-    try {
-      const data = new FormData();
-      data.append("file", req.file.buffer, {
-        filename: req.file.originalname,
-        contentType: req.file.mimetype,
-      });
+const fs = require("fs");
+const fs_extra = require("fs-extra");
+const path = require("path");
+const mime = require("mime-types");
 
-      const resp = await post_image(
-        req.params.user,
-        req.params.project,
-        "src",
-        data
-      );
+const JSZip = require("jszip");
 
-      const og_key_tmp = resp.data.data.imageKey.split("/");
-      const og_key = og_key_tmp[og_key_tmp.length - 1];
+const { v4: uuidv4 } = require('uuid');
 
-      const og_uri = `./images/users/${req.params.user}/projects/${req.params.project}/src/${req.file.originalname}`;
-      const new_uri = `./images/users/${req.params.user}/projects/${req.params.project}/out/${req.file.originalname}`;
+const {
+  send_msg_tool,
+  send_msg_client,
+  send_msg_client_error,
+  send_msg_client_preview,
+  send_msg_client_preview_error,
+  read_msg,
+} = require("../utils/project_msg");
 
-      const imgDoc = {
-        og_uri: og_uri,
-        new_uri: new_uri,
-        og_img_key: og_key,
-      };
+const Project = require("../controllers/project");
+const Process = require("../controllers/process");
+const Result = require("../controllers/result");
+const Preview = require("../controllers/preview");
 
-      // Atomically append image while preventing duplicates by og_uri
-      const updateResult = await Project.appendImage(
-        req.params.user,
-        req.params.project,
-        imgDoc
-      );
+const {
+  get_image_docker,
+  get_image_host,
+  post_image,
+  delete_image,
+} = require("../utils/minio");
 
-      if (!updateResult || updateResult.modifiedCount === 0) {
-        return res
-          .status(400)
-          .jsonp("This project already has an image with that name.");
-      }
+const storage = multer.memoryStorage();
+var upload = multer({ storage: storage });
 
-      console.log("[projects-ms] Image appended successfully");
-      return res.sendStatus(204);
-    } catch (e) {
-      console.error("[projects-ms] Error storing image:", e && e.message);
-      return res.status(501).jsonp(`Error storing image`);
-    }
-  }
-);
-        } catch (decErr) {
-          console.log('SHARE_MW jwt.decode failed:', decErr && decErr.message);
-        }
+const key = fs.readFileSync(__dirname + "/../certs/selfsigned.key");
+const cert = fs.readFileSync(__dirname + "/../certs/selfsigned.crt");
 
-        if (preview && preview.type === 'share_link') {
-          try {
-            const decoded = jwt.verify(token, SHARE_SECRET);
-            console.log('SHARE_MW decoded token:', decoded && { owner: decoded.owner, permission: decoded.permission, projectId: decoded.projectId });
-            if (decoded && decoded.type === 'share_link' && decoded.owner) {
-              // Overwrite params.user for downstream handlers
-              req.params = req.params || {};
-              req.params.user = decoded.owner;
-              req.shareToken = token;
-              req.sharePermission = decoded.permission;
-            }
-          } catch (e) {
-            console.log('SHARE_MW verify failed for share_link token:', e && e.message);
-          }
-        } else {
-          try { console.log('SHARE_MW token is not a share_link (skipping verify)'); } catch (_) {}
-        }
-      } catch (e) {
-        console.log('SHARE_MW middleware inner error:', e && e.message);
-      }
-    }
-  } catch (e) {
-    console.log('SHARE_MW middleware top-level error:', e && e.message);
-  }
-  return next();
+const https = require("https");
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false, // (NOTE: this will disable client verification)
+  cert: cert,
+  key: key,
 });
 
 const users_ms = "https://users:10001/";
@@ -125,18 +77,14 @@ function advanced_tool_num(project) {
 // TODO process message according to type of output
 function process_msg() {
   read_msg(async (msg) => {
-    // These need to be visible in the catch block as well
-    let user_msg_id;
-    let process;
-    let timestamp;
     try {
       const msg_content = JSON.parse(msg.content.toString());
       const msg_id = msg_content.correlationId;
-      timestamp = new Date().toISOString();
+      const timestamp = new Date().toISOString();
 
-      user_msg_id = `update-client-process-${uuidv4()}`;
+      const user_msg_id = `update-client-process-${uuidv4()}`;
 
-      process = await Process.getOne(msg_id);
+      const process = await Process.getOne(msg_id);
 
       const prev_process_input_img = process.og_img_uri;
       const prev_process_output_img = process.new_img_uri;
@@ -169,15 +117,9 @@ function process_msg() {
       const type = msg_content.output.type;
       const project = await Project.getOne(process.user_id, process.project_id);
 
-      // Ensure tools are processed in a stable order even if their
-      // stored `position` values have gaps (e.g., after deletions).
-      const tools = Array.isArray(project.tools)
-        ? [...project.tools].sort((a, b) => a.position - b.position)
-        : [];
-
       const next_pos = process.cur_pos + 1;
 
-      if (/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
+      if (/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -212,7 +154,7 @@ function process_msg() {
         
         await Preview.create(preview);
 
-        if(next_pos >= tools.length){
+        if(next_pos >= project.tools.length){
           const previews = await Preview.getAll(process.user_id, process.project_id);
 
           let urls = {
@@ -245,7 +187,7 @@ function process_msg() {
         }
       }
 
-      if(/preview/.test(msg_id) && next_pos >= tools.length) return;
+      if(/preview/.test(msg_id) && next_pos >= project.tools.length) return;
 
       if (!/preview/.test(msg_id))
         send_msg_client(
@@ -254,7 +196,7 @@ function process_msg() {
           process.user_id
         );
 
-      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= tools.length)) {
+      if (!/preview/.test(msg_id) && (type == "text" || next_pos >= project.tools.length)) {
         const file_path = path.join(__dirname, `/../${output_file_uri}`);
         const file_name = path.basename(file_path);
         const fileStream = fs.createReadStream(file_path); // Use createReadStream for efficiency
@@ -289,13 +231,13 @@ function process_msg() {
         await Result.create(result);
       }
 
-      if (next_pos >= tools.length) return;
+      if (next_pos >= project.tools.length) return;
 
       const new_msg_id = /preview/.test(msg_id)
         ? `preview-${uuidv4()}`
         : `request-${uuidv4()}`;
 
-      const tool = tools[next_pos];
+      const tool = project.tools.filter((t) => t.position == next_pos)[0];
 
       const tool_name = tool.procedure;
       const params = tool.params;
@@ -323,21 +265,14 @@ function process_msg() {
         tool_name,
         params
       );
-    } catch (err) {
-      console.error("Error while processing project message", err);
-
-      // Safely notify client if we have enough context; otherwise just swallow
-      if (process && process.user_id) {
-        const safeMsgId = user_msg_id || `update-client-process-${uuidv4()}`;
-        const safeTimestamp = timestamp || new Date().toISOString();
-        send_msg_client_error(
-          safeMsgId,
-          safeTimestamp,
-          process.user_id,
-          "30000",
-          "An error happened while processing the project"
-        );
-      }
+    } catch (_) {
+      send_msg_client_error(
+        user_msg_id,
+        timestamp,
+        process.user_id,
+        "30000",
+        "An error happened while processing the project"
+      );
       return;
     }
   });
@@ -363,7 +298,6 @@ router.get("/:user", (req, res, next) => {
 
 // Get a specific user's project
 router.get("/:user/:project", (req, res, next) => {
-  console.log('ROUTE GET /:user/:project - params before:', req.params, 'shareTokenPresent:', !!req.shareToken, 'sharePermission:', req.sharePermission);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       const response = {
@@ -401,7 +335,6 @@ router.get("/:user/:project", (req, res, next) => {
 
 // Get a specific project's image
 router.get("/:user/:project/img/:img", async (req, res, next) => {
-  console.log('ROUTE GET /:user/:project/img/:img - params before:', req.params, 'shareTokenPresent:', !!req.shareToken);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       try {
@@ -426,7 +359,6 @@ router.get("/:user/:project/img/:img", async (req, res, next) => {
 
 // Get project images
 router.get("/:user/:project/imgs", async (req, res, next) => {
-  console.log('ROUTE GET /:user/:project/imgs - params before:', req.params, 'shareTokenPresent:', !!req.shareToken);
   Project.getOne(req.params.user, req.params.project)
     .then(async (project) => {
       try {
@@ -695,15 +627,6 @@ router.post(
   "/:user/:project/img",
   upload.single("image"),
   async (req, res, next) => {
-    console.log(
-      "[projects-ms] POST /:user/:project/img",
-      "user=",
-      req.params.user,
-      "project=",
-      req.params.project,
-      "filename=",
-      req.file && req.file.originalname
-    );
     if (!req.file) {
       res.status(400).jsonp("No file found");
       return;
@@ -711,10 +634,6 @@ router.post(
 
     Project.getOne(req.params.user, req.params.project)
       .then(async (project) => {
-        console.log(
-          "[projects-ms] Current image count before insert:",
-          Array.isArray(project.imgs) ? project.imgs.length : 0
-        );
         const same_name_img = project.imgs.filter(
           (i) => path.basename(i.og_uri) == req.file.originalname
         );
@@ -754,13 +673,7 @@ router.post(
             });
 
             Project.update(req.params.user, req.params.project, project)
-              .then((_) => {
-                console.log(
-                  "[projects-ms] Image inserted, new count:",
-                  Array.isArray(project.imgs) ? project.imgs.length : 0
-                );
-                res.sendStatus(204);
-              })
+              .then((_) => res.sendStatus(204))
               .catch((_) =>
                 res.status(503).jsonp(`Error updating project information`)
               );
@@ -777,7 +690,6 @@ router.post(
 
 // Add new tool to a project
 router.post("/:user/:project/tool", (req, res, next) => {
-  console.log('ROUTE POST /:user/:project/tool - params before:', req.params, 'shareTokenPresent:', !!req.shareToken, 'body:', Object.keys(req.body));
   // Reject posts to tools that don't fullfil the requirements
   if (!req.body.procedure || !req.body.params) {
     res

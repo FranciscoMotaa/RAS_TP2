@@ -389,7 +389,7 @@ export function ToolbarButton({
           </Button>
           <Button
             variant="outline"
-            onClick={() => handleAddTool(true)}
+            onClick={() => handlePreview()}
             className="h-6 text-xs"
           >
             Preview

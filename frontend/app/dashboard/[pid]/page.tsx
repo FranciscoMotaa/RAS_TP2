@@ -149,6 +149,12 @@ export default function Project({
             if (!isMobile) sidebar.setOpen(true);
             setProcessingProgress(0);
             setProcessingSteps(1);
+            
+            // Switch to results mode and grid view after processing completes
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("mode", "results");
+            params.set("view", "grid");
+            router.replace(`${path}?${params.toString()}`);
           });
         }, 2000);
       }

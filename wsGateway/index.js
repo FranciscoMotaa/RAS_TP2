@@ -3,7 +3,11 @@ const socketIo = require('socket.io');
 const jwt = require("jsonwebtoken");
 
 const { read_rabbit_msg } = require("./utils/rabbit_mq.js");
+<<<<<<< HEAD
 const { ProjectObserverManager } = require("./observers/ProjectObserver.js");
+=======
+const { observerManager } = require("./observers/ProjectObserver.js");
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
 
 const httpServer = http.createServer();
 httpServer.listen(4000);
@@ -79,9 +83,42 @@ io.on("connection", (socket) => {
                 socket.join(roomId);
             }
 
+<<<<<<< HEAD
             // Store userId in socket for later use
             socket.userId = userId;
             socket.currentProjectId = shareToken ? jwt.decode(shareToken)?.projectId : null;
+=======
+            // Observer Pattern: Subscribe to project if shareToken is present
+            if (shareToken) {
+                try {
+                    const SHARE_SECRET = process.env.SHARE_SECRET || "share_secret_key";
+                    const decoded = jwt.verify(shareToken, SHARE_SECRET);
+                    
+                    if (decoded && decoded.type === 'share_link') {
+                        const projectId = decoded.projectId;
+                        const ownerId = decoded.owner;
+                        const permission = decoded.permission || 'view';
+                        
+                        // Subscribe user as observer of this project
+                        observerManager.subscribe(projectId, ownerId, payload.id, {
+                            socketId: socket.id,
+                            permission: permission
+                        });
+                        
+                        console.log(`[Observer] User ${payload.id} subscribed to project ${projectId} with ${permission} permission`);
+                        
+                        // Store subscription info for cleanup on disconnect
+                        socket._observerSubscription = {
+                            projectId,
+                            ownerId,
+                            userId: payload.id
+                        };
+                    }
+                } catch (err) {
+                    console.error('[Observer] Error processing shareToken:', err.message);
+                }
+            }
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
         });
     }
 
@@ -89,6 +126,7 @@ io.on("connection", (socket) => {
         console.log("A user disconnected");
         
         // Observer Pattern: Unsubscribe from project on disconnect
+<<<<<<< HEAD
         if (socket.userId && socket.currentProjectId) {
             console.log(`[Observer] User ${socket.userId} unsubscribing from project ${socket.currentProjectId}`);
             observerManager.unsubscribe(socket.currentProjectId, socket.userId);
@@ -104,6 +142,16 @@ io.on("connection", (socket) => {
     });
 
     // Observer Pattern: Get observer stats (for debugging)
+=======
+        if (socket._observerSubscription) {
+            const { projectId, ownerId, userId } = socket._observerSubscription;
+            observerManager.unsubscribe(projectId, ownerId, userId);
+            console.log(`[Observer] User ${userId} unsubscribed from project ${projectId} on disconnect`);
+        }
+    });
+    
+    // Debug endpoint to get observer stats
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
     socket.on("get-observer-stats", () => {
         const stats = observerManager.getStats();
         socket.emit("observer-stats", stats);
@@ -119,7 +167,11 @@ function process_msg() {
         const timestamp = msg_content.timestamp
         const status = msg_content.status;
         const user = msg_content.user;
+<<<<<<< HEAD
         const projectId = msg_content.projectId;
+=======
+        const projectId = msg_content.projectId; // Added for Observer Pattern
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
 
         console.log('Received msg:', JSON.stringify(msg_content));
 
@@ -129,6 +181,14 @@ function process_msg() {
                 const error_msg = msg_content.errorMsg;
 
                 io.to(user).emit("preview-error", JSON.stringify({ 'error_code': error_code, 'error_msg': error_msg }));
+                
+                // Observer Pattern: Notify observers of preview error
+                if (projectId) {
+                    observerManager.notifyProject(projectId, user, 'preview-error', {
+                        error_code,
+                        error_msg
+                    }, io);
+                }
 
                 // Observer Pattern: Notify all observers of preview error
                 if (projectId) {
@@ -146,6 +206,7 @@ function process_msg() {
             const img_url = msg_content.img_url;
 
             io.to(user).emit("preview-ready", img_url);
+<<<<<<< HEAD
 
             // Observer Pattern: Notify all observers of preview ready
             if (projectId) {
@@ -155,6 +216,14 @@ function process_msg() {
                     { img_url },
                     io
                 );
+=======
+            
+            // Observer Pattern: Notify observers that preview is ready
+            if (projectId) {
+                observerManager.notifyProject(projectId, user, 'preview-ready', {
+                    img_url
+                }, io);
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
             }
         }
 
@@ -164,6 +233,15 @@ function process_msg() {
                 const error_msg = msg_content.errorMsg;
 
                 io.to(user).emit("process-error", JSON.stringify({ 'error_code': error_code, 'error_msg': error_msg }));
+                
+                // Observer Pattern: Notify observers of process error
+                if (projectId) {
+                    observerManager.notifyProject(projectId, user, 'process-error', {
+                        error_code,
+                        error_msg,
+                        messageId: msg_id
+                    }, io);
+                }
 
                 // Observer Pattern: Notify all observers of process error
                 if (projectId) {
@@ -179,6 +257,7 @@ function process_msg() {
             }
 
             io.to(user).emit("process-update", msg_id);
+<<<<<<< HEAD
 
             // Observer Pattern: Notify all observers of process update
             if (projectId) {
@@ -188,6 +267,14 @@ function process_msg() {
                     { messageId: msg_id },
                     io
                 );
+=======
+            
+            // Observer Pattern: Notify observers of process update
+            if (projectId) {
+                observerManager.notifyProject(projectId, user, 'process-update', {
+                    messageId: msg_id
+                }, io);
+>>>>>>> 1463640 (Comportamento de results mode e view mode corrigido e método observer implementado)
             }
         }
 
